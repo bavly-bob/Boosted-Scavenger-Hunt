@@ -46,7 +46,7 @@ private:
     bool m_levelsConfigured;
 
     static constexpr int HUD_HEIGHT = 72;
-    static constexpr int CELL_SIZE = 36;
+    static constexpr int TILE_SIZE = 32;
 };
 
 #endif // GAMEWINDOW_H

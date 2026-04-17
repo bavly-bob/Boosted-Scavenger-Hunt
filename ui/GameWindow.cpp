@@ -167,12 +167,12 @@ void GameWindow::paintEvent(QPaintEvent *event)
         return;
     }
 
-    // Grid
+    // Grid (temporary full render; Phase 2 will add camera + culling)
     p.save();
     p.translate(0, HUD_HEIGHT);
     for (int y = 0; y < level->getHeight(); ++y) {
         for (int x = 0; x < level->getWidth(); ++x) {
-            const QRect cell(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            const QRect cell(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
             const QColor base = ((x + y) % 2 == 0) ? QColor(255, 255, 255, 18) : QColor(0, 0, 0, 18);
             p.fillRect(cell, base);
             p.setPen(QPen(QColor(0, 0, 0, 60), 1));
@@ -182,10 +182,10 @@ void GameWindow::paintEvent(QPaintEvent *event)
 
     for (GameObject* obj : level->getObjects()) {
         if (obj) {
-            obj->draw(p, CELL_SIZE);
+            obj->draw(p, TILE_SIZE);
         }
     }
-    player->draw(p, CELL_SIZE);
+    player->draw(p, TILE_SIZE);
     p.restore();
 }
 
@@ -275,7 +275,7 @@ void GameWindow::resizeToCurrentLevel()
         return;
     }
 
-    setFixedSize(level->getWidth() * CELL_SIZE, HUD_HEIGHT + level->getHeight() * CELL_SIZE);
+    setFixedSize(level->getWidth() * TILE_SIZE, HUD_HEIGHT + level->getHeight() * TILE_SIZE);
     m_pauseOverlay->setGeometry(rect());
     m_gameOverOverlay->setGeometry(rect());
 }
