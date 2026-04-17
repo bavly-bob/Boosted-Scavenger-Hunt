@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Chamber.h"
 #include "Enums.h"
 
 #include <QPoint>
@@ -97,7 +98,14 @@ public:
     // Applies side-effects for stepping onto a tile (coins, triggers, etc.).
     InteractionResult interactAt(int x, int y, Player& player, ClueManager& clues);
 
+    // ── Chamber support ───────────────────────────────────────────────────
+    void addChamber(const Chamber& ch);
+    const QVector<Chamber>& getChambers() const;
+    int chamberCount() const;
+
 private:
+    QVector<Chamber> m_chambers;
+
     static quint64 posKey(int x, int y);
     void setTileAndCollision(int x, int y, int tileId, bool colliding);
     void addOwnedObject(GameObject* object);

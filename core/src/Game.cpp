@@ -251,6 +251,11 @@ void Game::onTick()
         return;
     }
 
+    // Advance player animation each tick.
+    if (m_player) {
+        m_player->advanceAnimation();
+    }
+
     if (m_timeRemaining > 0) {
         m_timeRemaining -= 1;
     }
@@ -270,3 +275,4 @@ void Game::onTick()
 
     emit gameUpdated();
 }
+

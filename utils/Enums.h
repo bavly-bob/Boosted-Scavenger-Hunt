@@ -22,6 +22,14 @@ enum class Direction {
     Right
 };
 
+enum class AnimationState {
+    Idle,
+    MovingUp,
+    MovingDown,
+    MovingLeft,
+    MovingRight
+};
+
 enum class CellType {
     Empty,
     Wall,
@@ -30,5 +38,7 @@ enum class CellType {
     Coin,
     TreasureRoom,
     ClueTrigger,
-    Player
+    Player,
+    Corridor,
+    Chamber
 };

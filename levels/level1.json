@@ -1,49 +1,43 @@
 {
-  "name": "Level 1 - The Forest Entrance",
-  "difficulty": "EASY",
-  "width": 15,
-  "height": 11,
-  "timeLimit": 120,
-  "spawnX": 1,
-  "spawnY": 1,
-  "treasureX": 13,
-  "treasureY": 9,
-  "walls": [
-    [0,0],[1,0],[2,0],[3,0],[4,0],[5,0],[6,0],[7,0],[8,0],[9,0],[10,0],[11,0],[12,0],[13,0],[14,0],
-    [0,10],[1,10],[2,10],[3,10],[4,10],[5,10],[6,10],[7,10],[8,10],[9,10],[10,10],[11,10],[12,10],[13,10],[14,10],
-    [0,1],[0,2],[0,3],[0,4],[0,5],[0,6],[0,7],[0,8],[0,9],
-    [14,1],[14,2],[14,3],[14,4],[14,5],[14,6],[14,7],[14,8],[14,9],
-
-    [4,1],[4,2],[4,3],[4,5],[4,6],[4,7],
-    [5,5],[6,5],[7,5],[9,5],[10,5],[11,5],[12,5],
-    [9,6],[9,8],[9,9],
-    [6,2],[7,2],[8,2],[9,2],[11,2],[12,2],
-    [2,8],[3,8],[4,8],[5,8],[6,8]
+  "name": "The Forgotten Ruins",
+  "format": "chambers",
+  "width": 48,
+  "height": 32,
+  "timeLimit": 180,
+  "seed": 1001,
+  "spawnChamber": 0,
+  "chambers": [
+    { "id": 0, "x": 2,  "y": 2,  "w": 8,  "h": 6  },
+    { "id": 1, "x": 14, "y": 2,  "w": 9,  "h": 7  },
+    { "id": 2, "x": 28, "y": 3,  "w": 8,  "h": 6  },
+    { "id": 3, "x": 3,  "y": 14, "w": 7,  "h": 7, "hasCoin": true },
+    { "id": 4, "x": 17, "y": 13, "w": 9,  "h": 6, "hasCoin": true },
+    { "id": 5, "x": 30, "y": 12, "w": 8,  "h": 8, "hasCoin": true },
+    { "id": 6, "x": 8,  "y": 23, "w": 7,  "h": 6, "hasCoin": true },
+    { "id": 7, "x": 32, "y": 23, "w": 9,  "h": 6, "hasTreasureRoom": true }
   ],
-  "triggerWalls": [],
-  "hiddenWalls": [],
-  "coins": [
-    {"x":3, "y":2, "value":100},
-    {"x":7, "y":3, "value":100},
-    {"x":11,"y":7, "value":100},
-    {"x":5, "y":9, "value":100}
+  "corridors": [
+    { "from": 0, "to": 1 },
+    { "from": 1, "to": 2 },
+    { "from": 0, "to": 3 },
+    { "from": 1, "to": 4 },
+    { "from": 2, "to": 5 },
+    { "from": 3, "to": 4 },
+    { "from": 4, "to": 5 },
+    { "from": 3, "to": 6 },
+    { "from": 5, "to": 7 },
+    { "from": 6, "to": 7 }
   ],
   "clues": [
     {
-      "triggerX": 5, "triggerY": 3,
-      "condition": "position",
-      "text": "The treasure lies beyond the eastern passage..."
-    },
-    {
       "condition": "coins",
       "coinsRequired": 2,
-      "text": "A hidden wall may open if you touch the right spot!"
+      "text": "The ruins grow darker... and yet something glimmers to the east."
     },
     {
       "condition": "coins",
       "coinsRequired": 3,
-      "text": "The treasure room is now unlocked! Find it quickly!"
+      "text": "Three coins! The ancient treasure room has unlocked itself!"
     }
   ]
 }
-

@@ -41,6 +41,7 @@ set(PROJECT_SOURCES
         systems/include/InputHandler.h systems/src/InputHandler.cpp
         systems/include/SpriteManager.h systems/src/SpriteManager.cpp
         utils/Enums.h
+        core/include/Chamber.h
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -48,17 +49,11 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
     )
-# Define target properties for Android with Qt 6 as:
-#    set_property(TARGET ScavengerHunt APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
-#                 ${CMAKE_CURRENT_SOURCE_DIR}/android)
-# For more information, see https://doc.qt.io/qt-6/qt-add-executable.html#target-creation
 else()
     if(ANDROID)
         add_library(ScavengerHunt SHARED
             ${PROJECT_SOURCES}
         )
-# Define properties for Android with Qt 5 after find_package() calls as:
-#    set(ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
     else()
         add_executable(ScavengerHunt
             ${PROJECT_SOURCES}
@@ -72,6 +67,8 @@ target_include_directories(ScavengerHunt PRIVATE . core/include gameplay/include
 add_custom_command(TARGET ScavengerHunt POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ScavengerHunt>/levels"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/levels" "$<TARGET_FILE_DIR:ScavengerHunt>/levels"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ScavengerHunt>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:ScavengerHunt>/assets"
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.

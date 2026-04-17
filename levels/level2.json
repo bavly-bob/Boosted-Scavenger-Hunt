@@ -1,57 +1,54 @@
 {
-  "name": "Level 2 - The Dungeon",
-  "difficulty": "NORMAL",
-  "width": 17,
-  "height": 13,
-  "timeLimit": 100,
-  "spawnX": 1,
-  "spawnY": 1,
-  "treasureX": 15,
-  "treasureY": 11,
-  "walls": [
-    [0,0],[1,0],[2,0],[3,0],[4,0],[5,0],[6,0],[7,0],[8,0],[9,0],[10,0],[11,0],[12,0],[13,0],[14,0],[15,0],[16,0],
-    [0,12],[1,12],[2,12],[3,12],[4,12],[5,12],[6,12],[7,12],[8,12],[9,12],[10,12],[11,12],[12,12],[13,12],[14,12],[15,12],[16,12],
-    [0,1],[0,2],[0,3],[0,4],[0,5],[0,6],[0,7],[0,8],[0,9],[0,10],[0,11],
-    [16,1],[16,2],[16,3],[16,4],[16,5],[16,6],[16,7],[16,8],[16,9],[16,10],[16,11],
-
-    [10,1],[10,2],[10,3],[10,4],[10,5],[10,8],[10,9],[10,10],[10,11],
-    [2,3],[3,3],[5,3],[6,3],[7,3],[8,3],
-    [2,8],[3,8],[4,8],[5,8],[7,8],[8,8],[9,8],
-    [11,5],[12,5],[14,5],[15,5],
-    [11,10],[13,10],[14,10],[15,10],
-    [14,2],[14,3],[14,4],[14,5],[14,7],[14,8],[14,9]
+  "name": "The Sunken Catacombs",
+  "format": "chambers",
+  "width": 56,
+  "height": 38,
+  "timeLimit": 150,
+  "seed": 2002,
+  "spawnChamber": 0,
+  "chambers": [
+    { "id": 0,  "x": 2,  "y": 2,  "w": 8,  "h": 6  },
+    { "id": 1,  "x": 14, "y": 2,  "w": 8,  "h": 5  },
+    { "id": 2,  "x": 28, "y": 1,  "w": 9,  "h": 6  },
+    { "id": 3,  "x": 42, "y": 2,  "w": 9,  "h": 7, "hasCoin": true },
+    { "id": 4,  "x": 2,  "y": 14, "w": 7,  "h": 7, "hasCoin": true },
+    { "id": 5,  "x": 16, "y": 13, "w": 9,  "h": 8, "hasCoin": true },
+    { "id": 6,  "x": 30, "y": 12, "w": 8,  "h": 7  },
+    { "id": 7,  "x": 43, "y": 13, "w": 8,  "h": 8, "hasCoin": true },
+    { "id": 8,  "x": 5,  "y": 26, "w": 8,  "h": 7, "hasCoin": true },
+    { "id": 9,  "x": 20, "y": 26, "w": 9,  "h": 7  },
+    { "id": 10, "x": 35, "y": 25, "w": 8,  "h": 7  },
+    { "id": 11, "x": 44, "y": 27, "w": 8,  "h": 8, "hasTreasureRoom": true }
   ],
-  "triggerWalls": [
-    {
-      "x": 7, "y": 5,
-      "opensWalls": [[10,6],[10,7]]
-    }
-  ],
-  "hiddenWalls": [
-    [10,6],[10,7]
-  ],
-  "coins": [
-    {"x":3, "y":2, "value":100},
-    {"x":6, "y":9, "value":100},
-    {"x":12,"y":3, "value":100},
-    {"x":14,"y":9, "value":100}
+  "corridors": [
+    { "from": 0,  "to": 1  },
+    { "from": 1,  "to": 2  },
+    { "from": 2,  "to": 3  },
+    { "from": 0,  "to": 4  },
+    { "from": 1,  "to": 5  },
+    { "from": 2,  "to": 6  },
+    { "from": 3,  "to": 7  },
+    { "from": 4,  "to": 5  },
+    { "from": 5,  "to": 6  },
+    { "from": 6,  "to": 7  },
+    { "from": 4,  "to": 8  },
+    { "from": 5,  "to": 9  },
+    { "from": 6,  "to": 10 },
+    { "from": 7,  "to": 11 },
+    { "from": 8,  "to": 9  },
+    { "from": 9,  "to": 10 },
+    { "from": 10, "to": 11 }
   ],
   "clues": [
     {
-      "triggerX": 4, "triggerY": 4,
-      "condition": "position",
-      "text": "The dungeon hides a break in the wall..."
-    },
-    {
       "condition": "coins",
       "coinsRequired": 2,
-      "text": "A hidden wall may open if you touch the right spot!"
+      "text": "The catacombs shift... a distant rumbling echoes through the stone."
     },
     {
       "condition": "coins",
       "coinsRequired": 3,
-      "text": "The treasure room is now unlocked! Find it quickly!"
+      "text": "The seal breaks! The treasure vault lies open in the deepest chamber."
     }
   ]
 }
-

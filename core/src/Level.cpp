@@ -385,3 +385,21 @@ void Level::addOwnedObject(GameObject* object)
     }
     m_objects.push_back(object);
 }
+
+// ── Chamber accessors ─────────────────────────────────────────────────────────
+
+void Level::addChamber(const Chamber& ch)
+{
+    m_chambers.push_back(ch);
+}
+
+const QVector<Chamber>& Level::getChambers() const
+{
+    return m_chambers;
+}
+
+int Level::chamberCount() const
+{
+    return m_chambers.size();
+}
+

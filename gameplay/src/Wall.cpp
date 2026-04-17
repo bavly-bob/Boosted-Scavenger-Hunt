@@ -1,9 +1,13 @@
 #include "Wall.h"
 
+#include "SpriteManager.h"
+
 #include <QPainter>
 
-Wall::Wall(int x, int y)
-    : GameObject(x, y)
+Wall::Wall(int x, int y, int tileVariant)
+    : GameObject(x, y),
+      m_tileVariant(tileVariant),
+      m_sprites(nullptr)
 {
 }
 
@@ -16,10 +20,55 @@ void Wall::draw(QPainter& painter, int cellSize) const
 {
     const QRect r(m_x * cellSize, m_y * cellSize, cellSize, cellSize);
 
+    // Attempt sprite-based rendering first.
+    if (m_sprites) {
+        const QString key = QString("wall_%1").arg(m_tileVariant);
+        const QPixmap& pix = m_sprites->sprite(key);
+        if (!pix.isNull()) {
+            painter.drawPixmap(r, pix);
+            return;
+        }
+    }
+
+    // Procedural fallback – draw a styled brick rectangle.
     painter.save();
-    painter.setPen(QPen(QColor(35, 35, 40), 1));
-    painter.setBrush(QColor(65, 65, 75));
-    painter.drawRect(r.adjusted(1, 1, -1, -1));
+
+    // Base colour varies slightly per variant for visual diversity.
+    static const QColor variantColors[] = {
+        QColor(72,  72,  84),   // 0 – dark stone
+        QColor(60,  80,  60),   // 1 – mossy stone
+        QColor(90,  70,  55),   // 2 – brown brick
+        QColor(55,  55,  75),   // 3 – blue-grey slate
+    };
+    const int numVariants = static_cast<int>(sizeof(variantColors) / sizeof(variantColors[0]));
+    const QColor base = variantColors[m_tileVariant % numVariants];
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(base);
+    painter.drawRect(r);
+
+    // Top-left highlight edge
+    painter.setPen(QPen(base.lighter(140), 1));
+    painter.drawLine(r.topLeft(),     r.topRight());
+    painter.drawLine(r.topLeft(),     r.bottomLeft());
+
+    // Bottom-right shadow edge
+    painter.setPen(QPen(base.darker(160), 1));
+    painter.drawLine(r.bottomLeft(),  r.bottomRight());
+    painter.drawLine(r.topRight(),    r.bottomRight());
+
+    // Interior mortar lines (horizontal brick pattern)
+    painter.setPen(QPen(base.darker(130), 1));
+    const int halfH = r.top() + cellSize / 2;
+    painter.drawLine(r.left() + 1, halfH, r.right() - 1, halfH);
+    // Vertical joints staggered per row
+    const int jX = (m_y % 2 == 0) ? r.left() + cellSize / 2 : r.left() + cellSize / 4;
+    painter.drawLine(jX, r.top() + 1,    jX, halfH - 1);
+    const int jX2 = jX + cellSize / 2;
+    if (jX2 < r.right()) {
+        painter.drawLine(jX2, halfH + 1, jX2, r.bottom() - 1);
+    }
+
     painter.restore();
 }
 
@@ -28,3 +77,17 @@ bool Wall::isBlocking() const
     return true;
 }
 
+int Wall::getTileVariant() const
+{
+    return m_tileVariant;
+}
+
+void Wall::setTileVariant(int v)
+{
+    m_tileVariant = v;
+}
+
+void Wall::setSpriteManager(const SpriteManager* sm)
+{
+    m_sprites = sm;
+}
