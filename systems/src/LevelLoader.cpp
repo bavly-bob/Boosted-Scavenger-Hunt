@@ -13,6 +13,22 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+namespace {
+bool isValidGrid(const QJsonArray& rows, int expectedWidth, int expectedHeight)
+{
+    if (rows.size() != expectedHeight) {
+        return false;
+    }
+    for (const QJsonValue& rowVal : rows) {
+        const QJsonArray row = rowVal.toArray();
+        if (row.size() != expectedWidth) {
+            return false;
+        }
+    }
+    return true;
+}
+} // namespace
+
 Level* LevelLoader::loadFromJson(const QString& filePath, QJsonArray* outClues)
 {
     QFile file(filePath);
@@ -33,6 +49,31 @@ Level* LevelLoader::loadFromJson(const QString& filePath, QJsonArray* outClues)
     level->setSize(root.value("width").toInt(0), root.value("height").toInt(0));
     level->setTimeLimit(root.value("timeLimit").toInt(0));
     level->setSpawn(root.value("spawnX").toInt(0), root.value("spawnY").toInt(0));
+
+    // Optional: load full tile/collision grids (for large maps). If not present,
+    // grids are still created by Level::setSize and then incrementally marked by objects.
+    const int w = level->getWidth();
+    const int h = level->getHeight();
+    const QJsonArray tiles = root.value("tiles").toArray();
+    if (!tiles.isEmpty() && isValidGrid(tiles, w, h)) {
+        for (int y = 0; y < h; ++y) {
+            const QJsonArray row = tiles.at(y).toArray();
+            for (int x = 0; x < w; ++x) {
+                level->setTileAt(x, y, row.at(x).toInt(static_cast<int>(CellType::Empty)));
+            }
+        }
+    }
+
+    const QJsonArray collision = root.value("collision").toArray();
+    if (!collision.isEmpty() && isValidGrid(collision, w, h)) {
+        for (int y = 0; y < h; ++y) {
+            const QJsonArray row = collision.at(y).toArray();
+            for (int x = 0; x < w; ++x) {
+                const QJsonValue v = row.at(x);
+                level->setCollisionAt(x, y, v.isBool() ? v.toBool() : (v.toInt(0) != 0));
+            }
+        }
+    }
 
     const int treasureX = root.value("treasureX").toInt(-1);
     const int treasureY = root.value("treasureY").toInt(-1);

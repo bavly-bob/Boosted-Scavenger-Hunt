@@ -67,6 +67,8 @@ public:
 
     int tileAt(int x, int y) const;
     bool isCollidingAt(int x, int y) const;
+    void setTileAt(int x, int y, int tileId);
+    void setCollisionAt(int x, int y, bool colliding);
 
     void setTreasureRoom(TreasureRoom* room);
     TreasureRoom* getTreasureRoom() const;

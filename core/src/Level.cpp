@@ -112,6 +112,22 @@ bool Level::isCollidingAt(int x, int y) const
     return m_collision.at(y).at(x);
 }
 
+void Level::setTileAt(int x, int y, int tileId)
+{
+    if (!isInBounds(x, y) || m_tiles.isEmpty()) {
+        return;
+    }
+    setTileAndCollision(x, y, tileId, isCollidingAt(x, y));
+}
+
+void Level::setCollisionAt(int x, int y, bool colliding)
+{
+    if (!isInBounds(x, y) || m_collision.isEmpty()) {
+        return;
+    }
+    setTileAndCollision(x, y, tileAt(x, y), colliding);
+}
+
 void Level::setTreasureRoom(TreasureRoom* room)
 {
     m_treasureRoom = room;
