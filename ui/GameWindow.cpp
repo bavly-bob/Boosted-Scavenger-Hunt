@@ -261,20 +261,18 @@ void GameWindow::paintEvent(QPaintEvent *event)
         }
     }
 
-    for (GameObject* obj : level->getObjects()) {
-        if (obj) {
-            const int ox = obj->getX();
-            const int oy = obj->getY();
-            if (ox >= startX && ox <= endX && oy >= startY && oy <= endY) {
-                p.save();
-                p.translate(-camX, -camY);
-                obj->draw(p, TILE_SIZE);
-                p.restore();
-            }
-        }
-    }
     p.save();
     p.translate(-camX, -camY);
+    for (GameObject* obj : level->getObjects()) {
+        if (!obj) {
+            continue;
+        }
+        const int ox = obj->getX();
+        const int oy = obj->getY();
+        if (ox >= startX && ox <= endX && oy >= startY && oy <= endY) {
+            obj->draw(p, TILE_SIZE);
+        }
+    }
     player->draw(p, TILE_SIZE);
     p.restore();
 
