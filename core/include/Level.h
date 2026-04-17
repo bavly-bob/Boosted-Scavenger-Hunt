@@ -1,13 +1,19 @@
 #pragma once
 
 #include <QPoint>
+#include <QHash>
+#include <QtGlobal>
 #include <QString>
+#include <QList>
 #include <QVector>
 
+class ClueManager;
 class ClueTrigger;
 class Coin;
 class GameObject;
 class HiddenWall;
+struct InteractionResult;
+class Player;
 class TreasureRoom;
 class TriggerWall;
 class Wall;
@@ -20,7 +26,7 @@ class Level {
     int m_spawnX;
     int m_spawnY;
 
-    QVector<GameObject*> m_objects; // owning
+    QList<GameObject*> m_objects; // owning
 
     QVector<Wall*> m_walls;
     QVector<TriggerWall*> m_triggerWalls;
@@ -28,6 +34,13 @@ class Level {
     QVector<Coin*> m_coins;
     QVector<ClueTrigger*> m_clueTriggers;
     TreasureRoom* m_treasureRoom;
+
+    // Fast spatial lookup (tileX,tileY) -> object pointer.
+    QHash<quint64, Wall*> m_wallByPos;
+    QHash<quint64, TriggerWall*> m_triggerWallByPos;
+    QHash<quint64, HiddenWall*> m_hiddenWallByPos;
+    QHash<quint64, Coin*> m_coinByPos;
+    QHash<quint64, ClueTrigger*> m_clueTriggerByPos;
 
 public:
     Level();
@@ -53,11 +66,14 @@ public:
     void addCoin(Coin* coin);
     void addClueTrigger(ClueTrigger* clue);
 
-    const QVector<GameObject*>& getObjects() const;
+    const QList<GameObject*>& getObjects() const;
     const QVector<Coin*>& getCoins() const;
 
     bool isInBounds(int x, int y) const;
     bool isWalkable(int x, int y) const;
+
+    // Checks whether the player can enter a tile; if not, returns a reason.
+    bool canPlayerEnter(int x, int y, const Player& player, QString* outReason = nullptr) const;
 
     Wall* wallAt(int x, int y) const;
     TriggerWall* triggerWallAt(int x, int y) const;
@@ -65,7 +81,11 @@ public:
     Coin* coinAt(int x, int y) const;
     ClueTrigger* clueTriggerAt(int x, int y) const;
 
+    // Applies side-effects for stepping onto a tile (coins, triggers, etc.).
+    InteractionResult interactAt(int x, int y, Player& player, ClueManager& clues);
+
 private:
+    static quint64 posKey(int x, int y);
     void addOwnedObject(GameObject* object);
 };
 

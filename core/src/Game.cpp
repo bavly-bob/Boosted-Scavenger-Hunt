@@ -5,11 +5,7 @@
 #include "LevelLoader.h"
 #include "Player.h"
 
-#include "Coin.h"
-#include "ClueTrigger.h"
-#include "HiddenWall.h"
-#include "TreasureRoom.h"
-#include "TriggerWall.h"
+#include "InteractionResult.h"
 
 #include <QTimer>
 
@@ -136,16 +132,13 @@ void Game::handleInput(Direction dir)
         return;
     }
 
-    if (!m_currentLevel->isInBounds(targetX, targetY)) {
-        return;
-    }
-
-    if (TreasureRoom* treasure = m_currentLevel->getTreasureRoom()) {
-        if (treasure->getX() == targetX && treasure->getY() == targetY && !treasure->isUnlocked()) {
-            emit clueRevealed("The treasure room is locked. Collect at least 3 coins!");
+    QString blockedReason;
+    if (!m_currentLevel->canPlayerEnter(targetX, targetY, *m_player, &blockedReason)) {
+        if (!blockedReason.isEmpty() && blockedReason.contains("locked", Qt::CaseInsensitive)) {
+            emit clueRevealed(blockedReason);
             emit gameUpdated();
-            return;
         }
+        return;
     }
 
     m_player->move(dir, *m_currentLevel);
@@ -155,66 +148,28 @@ void Game::handleInput(Direction dir)
         return;
     }
 
-    if (Coin* coin = m_currentLevel->coinAt(newPos.x(), newPos.y())) {
-        if (!coin->isCollected()) {
-            coin->collect();
-            m_score += coin->getValue();
-            m_player->collectCoin();
-            emit coinCollected(m_player->getCoinsCollected());
-
-            for (const QString& clue : m_clueManager->checkCoinClues(m_player->getCoinsCollected())) {
-                emit clueRevealed(clue);
-            }
-        }
+    InteractionResult interaction = m_currentLevel->interactAt(newPos.x(), newPos.y(), *m_player, *m_clueManager);
+    if (interaction.scoreDelta != 0) {
+        m_score += interaction.scoreDelta;
     }
-
-    if (TreasureRoom* treasure = m_currentLevel->getTreasureRoom()) {
-        if (!treasure->isUnlocked() && m_player->canEnterTreasureRoom()) {
-            treasure->unlock();
-            emit treasureUnlocked();
-        }
+    if (interaction.coinCollected) {
+        emit coinCollected(interaction.coinsCollectedTotal);
     }
-
-    if (ClueTrigger* clueTrigger = m_currentLevel->clueTriggerAt(newPos.x(), newPos.y())) {
-        if (!clueTrigger->isActivated()) {
-            clueTrigger->activate();
-            const QStringList revealed = m_clueManager->checkPositionClue(newPos.x(), newPos.y());
-            if (revealed.isEmpty()) {
-                emit clueRevealed(clueTrigger->getClueText());
-            } else {
-                for (const QString& clue : revealed) {
-                    emit clueRevealed(clue);
-                }
-            }
-        }
+    for (const QString& clue : interaction.revealedClues) {
+        emit clueRevealed(clue);
     }
-
-    if (TriggerWall* triggerWall = m_currentLevel->triggerWallAt(newPos.x(), newPos.y())) {
-        if (!triggerWall->isTriggered()) {
-            triggerWall->trigger();
-            bool anyOpened = false;
-            for (const QPoint& pos : triggerWall->getOpensPositions()) {
-                if (HiddenWall* hidden = m_currentLevel->hiddenWallAt(pos.x(), pos.y())) {
-                    if (hidden->isBlocking()) {
-                        hidden->open();
-                        anyOpened = true;
-                    }
-                }
-            }
-            if (anyOpened) {
-                emit wallOpened();
-            }
-        }
+    if (interaction.wallOpened) {
+        emit wallOpened();
     }
-
-    if (TreasureRoom* treasure = m_currentLevel->getTreasureRoom()) {
-        if (treasure->isUnlocked() && treasure->getX() == newPos.x() && treasure->getY() == newPos.y()) {
-            m_state = GameState::WIN;
-            m_timer->stop();
-            emit gameUpdated();
-            emit gameOver(true, m_score);
-            return;
-        }
+    if (interaction.treasureUnlocked) {
+        emit treasureUnlocked();
+    }
+    if (interaction.won) {
+        m_state = GameState::WIN;
+        m_timer->stop();
+        emit gameUpdated();
+        emit gameOver(true, m_score);
+        return;
     }
 
     emit gameUpdated();
