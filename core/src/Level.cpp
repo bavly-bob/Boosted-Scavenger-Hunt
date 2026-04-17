@@ -45,6 +45,9 @@ void Level::setSize(int width, int height)
 {
     m_width = width;
     m_height = height;
+
+    m_tiles = QVector<QVector<int>>(m_height, QVector<int>(m_width, static_cast<int>(CellType::Empty)));
+    m_collision = QVector<QVector<bool>>(m_height, QVector<bool>(m_width, false));
 }
 
 void Level::setTimeLimit(int seconds)
@@ -83,10 +86,40 @@ QPoint Level::getSpawn() const
     return QPoint(m_spawnX, m_spawnY);
 }
 
+const QVector<QVector<int>>& Level::tiles() const
+{
+    return m_tiles;
+}
+
+const QVector<QVector<bool>>& Level::collision() const
+{
+    return m_collision;
+}
+
+int Level::tileAt(int x, int y) const
+{
+    if (!isInBounds(x, y) || m_tiles.isEmpty()) {
+        return static_cast<int>(CellType::Empty);
+    }
+    return m_tiles.at(y).at(x);
+}
+
+bool Level::isCollidingAt(int x, int y) const
+{
+    if (!isInBounds(x, y) || m_collision.isEmpty()) {
+        return true;
+    }
+    return m_collision.at(y).at(x);
+}
+
 void Level::setTreasureRoom(TreasureRoom* room)
 {
     m_treasureRoom = room;
     addOwnedObject(room);
+
+    if (room) {
+        setTileAndCollision(room->getX(), room->getY(), static_cast<int>(CellType::TreasureRoom), !room->isUnlocked());
+    }
 }
 
 TreasureRoom* Level::getTreasureRoom() const
@@ -99,6 +132,7 @@ void Level::addWall(Wall* wall)
     addOwnedObject(wall);
     m_walls.push_back(wall);
     m_wallByPos.insert(posKey(wall->getX(), wall->getY()), wall);
+    setTileAndCollision(wall->getX(), wall->getY(), static_cast<int>(CellType::Wall), true);
 }
 
 void Level::addTriggerWall(TriggerWall* wall)
@@ -106,6 +140,7 @@ void Level::addTriggerWall(TriggerWall* wall)
     addOwnedObject(wall);
     m_triggerWalls.push_back(wall);
     m_triggerWallByPos.insert(posKey(wall->getX(), wall->getY()), wall);
+    setTileAndCollision(wall->getX(), wall->getY(), static_cast<int>(CellType::TriggerWall), false);
 }
 
 void Level::addHiddenWall(HiddenWall* wall)
@@ -113,6 +148,7 @@ void Level::addHiddenWall(HiddenWall* wall)
     addOwnedObject(wall);
     m_hiddenWalls.push_back(wall);
     m_hiddenWallByPos.insert(posKey(wall->getX(), wall->getY()), wall);
+    setTileAndCollision(wall->getX(), wall->getY(), static_cast<int>(CellType::HiddenWall), wall->isBlocking());
 }
 
 void Level::addCoin(Coin* coin)
@@ -120,6 +156,7 @@ void Level::addCoin(Coin* coin)
     addOwnedObject(coin);
     m_coins.push_back(coin);
     m_coinByPos.insert(posKey(coin->getX(), coin->getY()), coin);
+    setTileAndCollision(coin->getX(), coin->getY(), static_cast<int>(CellType::Coin), false);
 }
 
 void Level::addClueTrigger(ClueTrigger* clue)
@@ -127,6 +164,7 @@ void Level::addClueTrigger(ClueTrigger* clue)
     addOwnedObject(clue);
     m_clueTriggers.push_back(clue);
     m_clueTriggerByPos.insert(posKey(clue->getX(), clue->getY()), clue);
+    setTileAndCollision(clue->getX(), clue->getY(), static_cast<int>(CellType::ClueTrigger), false);
 }
 
 const QList<GameObject*>& Level::getObjects() const
@@ -148,6 +186,13 @@ bool Level::isWalkable(int x, int y) const
 {
     if (!isInBounds(x, y)) {
         return false;
+    }
+
+    // Prefer the grid once it exists; this is the target architecture.
+    if (!m_collision.isEmpty()) {
+        if (isCollidingAt(x, y)) {
+            return false;
+        }
     }
 
     if (wallAt(x, y) != nullptr) {
@@ -263,6 +308,7 @@ InteractionResult Level::interactAt(int x, int y, Player& player, ClueManager& c
     if (TreasureRoom* treasure = getTreasureRoom()) {
         if (!treasure->isUnlocked() && player.canEnterTreasureRoom()) {
             treasure->unlock();
+            setTileAndCollision(treasure->getX(), treasure->getY(), static_cast<int>(CellType::TreasureRoom), false);
             result.treasureUnlocked = true;
         }
     }
@@ -289,6 +335,7 @@ InteractionResult Level::interactAt(int x, int y, Player& player, ClueManager& c
                 if (HiddenWall* hidden = hiddenWallAt(pos.x(), pos.y())) {
                     if (hidden->isBlocking()) {
                         hidden->open();
+                        setTileAndCollision(hidden->getX(), hidden->getY(), static_cast<int>(CellType::Empty), false);
                         anyOpened = true;
                     }
                 }
@@ -304,6 +351,15 @@ InteractionResult Level::interactAt(int x, int y, Player& player, ClueManager& c
     }
 
     return result;
+}
+
+void Level::setTileAndCollision(int x, int y, int tileId, bool colliding)
+{
+    if (!isInBounds(x, y) || m_tiles.isEmpty() || m_collision.isEmpty()) {
+        return;
+    }
+    m_tiles[y][x] = tileId;
+    m_collision[y][x] = colliding;
 }
 
 void Level::addOwnedObject(GameObject* object)

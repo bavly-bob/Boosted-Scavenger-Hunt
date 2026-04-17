@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Enums.h"
+
 #include <QPoint>
 #include <QHash>
 #include <QtGlobal>
@@ -26,6 +28,9 @@ class Level {
     int m_spawnX;
     int m_spawnY;
 
+    // Target architecture: layered grids + objects.
+    QVector<QVector<int>> m_tiles;
+    QVector<QVector<bool>> m_collision;
     QList<GameObject*> m_objects; // owning
 
     QVector<Wall*> m_walls;
@@ -57,6 +62,12 @@ public:
     int getTimeLimit() const;
     QPoint getSpawn() const;
 
+    const QVector<QVector<int>>& tiles() const;
+    const QVector<QVector<bool>>& collision() const;
+
+    int tileAt(int x, int y) const;
+    bool isCollidingAt(int x, int y) const;
+
     void setTreasureRoom(TreasureRoom* room);
     TreasureRoom* getTreasureRoom() const;
 
@@ -86,6 +97,7 @@ public:
 
 private:
     static quint64 posKey(int x, int y);
+    void setTileAndCollision(int x, int y, int tileId, bool colliding);
     void addOwnedObject(GameObject* object);
 };
 
