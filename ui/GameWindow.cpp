@@ -14,6 +14,7 @@
 #include <QKeyEvent>
 #include <QLinearGradient>
 #include <QPainter>
+#include <QTimer>
 
 namespace {
 QString formatTime(int seconds)
@@ -51,6 +52,8 @@ GameWindow::GameWindow(QWidget *parent)
       m_game(new Game(this)),
       m_pauseOverlay(new PauseOverlay(this)),
       m_gameOverOverlay(new GameOverOverlay(this)),
+      m_renderTimer(new QTimer(this)),
+      m_cameraPx(0.0, 0.0),
       m_levelsConfigured(false)
 {
     setWindowTitle("Scavenger Hunt");
@@ -64,6 +67,11 @@ GameWindow::GameWindow(QWidget *parent)
     connect(m_game, &Game::wallOpened, this, &GameWindow::onWallOpened);
     connect(m_game, &Game::treasureUnlocked, this, &GameWindow::onTreasureUnlocked);
     connect(m_game, &Game::gameOver, this, &GameWindow::onGameOver);
+
+    // Drive smooth camera animation even when no inputs occur.
+    m_renderTimer->setInterval(16);
+    connect(m_renderTimer, &QTimer::timeout, this, QOverload<>::of(&GameWindow::update));
+    m_renderTimer->start();
 
     connect(m_pauseOverlay, &PauseOverlay::resumeRequested, this, [this]() {
         hidePauseOverlay();
@@ -115,9 +123,36 @@ void GameWindow::startNewGame(Difficulty difficulty)
 
     m_game->startNewGame(difficulty);
     resizeToCurrentLevel();
+    snapCameraToPlayer();
 
     show();
     setFocus();
+}
+
+void GameWindow::snapCameraToPlayer()
+{
+    const Level* level = m_game->level();
+    const Player* player = m_game->player();
+    if (!level || !player) {
+        m_cameraPx = QPointF(0.0, 0.0);
+        return;
+    }
+
+    const int mapPixelW = level->getWidth() * TILE_SIZE;
+    const int mapPixelH = level->getHeight() * TILE_SIZE;
+
+    const int viewPixelW = width();
+    const int viewPixelH = height() - HUD_HEIGHT;
+
+    const qreal playerPxX = player->getX() * TILE_SIZE + TILE_SIZE / 2.0;
+    const qreal playerPxY = player->getY() * TILE_SIZE + TILE_SIZE / 2.0;
+
+    qreal camX = playerPxX - viewPixelW / 2.0;
+    qreal camY = playerPxY - viewPixelH / 2.0;
+
+    camX = qBound<qreal>(0.0, camX, qMax<qreal>(0.0, mapPixelW - viewPixelW));
+    camY = qBound<qreal>(0.0, camY, qMax<qreal>(0.0, mapPixelH - viewPixelH));
+    m_cameraPx = QPointF(camX, camY);
 }
 
 void GameWindow::paintEvent(QPaintEvent *event)
@@ -176,13 +211,18 @@ void GameWindow::paintEvent(QPaintEvent *event)
     const int viewPixelW = width();
     const int viewPixelH = height() - HUD_HEIGHT;
 
-    const int playerPxX = player->getX() * TILE_SIZE + TILE_SIZE / 2;
-    const int playerPxY = player->getY() * TILE_SIZE + TILE_SIZE / 2;
+    const qreal playerPxX = player->getX() * TILE_SIZE + TILE_SIZE / 2.0;
+    const qreal playerPxY = player->getY() * TILE_SIZE + TILE_SIZE / 2.0;
 
-    int camX = playerPxX - viewPixelW / 2;
-    int camY = playerPxY - viewPixelH / 2;
-    camX = qBound(0, camX, qMax(0, mapPixelW - viewPixelW));
-    camY = qBound(0, camY, qMax(0, mapPixelH - viewPixelH));
+    qreal targetCamX = playerPxX - viewPixelW / 2.0;
+    qreal targetCamY = playerPxY - viewPixelH / 2.0;
+    targetCamX = qBound<qreal>(0.0, targetCamX, qMax<qreal>(0.0, mapPixelW - viewPixelW));
+    targetCamY = qBound<qreal>(0.0, targetCamY, qMax<qreal>(0.0, mapPixelH - viewPixelH));
+
+    m_cameraPx.setX(m_cameraPx.x() + (targetCamX - m_cameraPx.x()) * CAMERA_LERP);
+    m_cameraPx.setY(m_cameraPx.y() + (targetCamY - m_cameraPx.y()) * CAMERA_LERP);
+    const int camX = static_cast<int>(m_cameraPx.x());
+    const int camY = static_cast<int>(m_cameraPx.y());
 
     // Convert camera pixels -> tile bounds.
     const int startX = qMax(0, camX / TILE_SIZE);

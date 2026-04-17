@@ -3,8 +3,10 @@
 
 #include "Enums.h"
 
+#include <QPointF>
 #include <QWidget>
 
+class QTimer;
 class Game;
 class GameOverOverlay;
 class PauseOverlay;
@@ -37,10 +39,14 @@ private:
     void resizeToCurrentLevel();
     void showPauseOverlay();
     void hidePauseOverlay();
+    void snapCameraToPlayer();
 
     Game* m_game;
     PauseOverlay* m_pauseOverlay;
     GameOverOverlay* m_gameOverOverlay;
+    QTimer* m_renderTimer;
+
+    QPointF m_cameraPx;
 
     QString m_statusText;
     bool m_levelsConfigured;
@@ -49,6 +55,7 @@ private:
     static constexpr int TILE_SIZE = 32;
     static constexpr int VIEWPORT_WIDTH = 800;
     static constexpr int VIEWPORT_HEIGHT = 600;
+    static constexpr qreal CAMERA_LERP = 0.18;
 };
 
 #endif // GAMEWINDOW_H
