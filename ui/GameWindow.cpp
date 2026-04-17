@@ -125,6 +125,12 @@ void GameWindow::startNewGame(Difficulty difficulty)
     resizeToCurrentLevel();
     snapCameraToPlayer();
 
+    if (const Level* level = m_game->level()) {
+        m_explored = QVector<QVector<bool>>(level->getHeight(), QVector<bool>(level->getWidth(), false));
+    } else {
+        m_explored.clear();
+    }
+
     show();
     setFocus();
 }
@@ -236,7 +242,19 @@ void GameWindow::paintEvent(QPaintEvent *event)
             const int screenX = x * TILE_SIZE - camX;
             const int screenY = y * TILE_SIZE - camY;
             const QRect cell(screenX, screenY, TILE_SIZE, TILE_SIZE);
-            const QColor base = ((x + y) % 2 == 0) ? QColor(255, 255, 255, 18) : QColor(0, 0, 0, 18);
+            const int tileId = level->tileAt(x, y);
+            QColor base;
+            switch (static_cast<CellType>(tileId)) {
+            case CellType::Wall:
+                base = QColor(65, 65, 75, 210);
+                break;
+            case CellType::HiddenWall:
+                base = QColor(75, 75, 90, 210);
+                break;
+            default:
+                base = ((x + y) % 2 == 0) ? QColor(255, 255, 255, 18) : QColor(0, 0, 0, 18);
+                break;
+            }
             p.fillRect(cell, base);
             p.setPen(QPen(QColor(0, 0, 0, 60), 1));
             p.drawRect(cell);
@@ -259,6 +277,44 @@ void GameWindow::paintEvent(QPaintEvent *event)
     p.translate(-camX, -camY);
     player->draw(p, TILE_SIZE);
     p.restore();
+
+    // Fog of war overlay (limited visibility + unexplored darkening).
+    const int px = player->getX();
+    const int py = player->getY();
+    if (!m_explored.isEmpty() && py >= 0 && py < m_explored.size() && px >= 0 && px < m_explored.at(py).size()) {
+        const int r = VISIBILITY_RADIUS_TILES;
+        for (int y = qMax(0, py - r); y <= qMin(level->getHeight() - 1, py + r); ++y) {
+            for (int x = qMax(0, px - r); x <= qMin(level->getWidth() - 1, px + r); ++x) {
+                const int dx = x - px;
+                const int dy = y - py;
+                if (dx * dx + dy * dy <= r * r) {
+                    m_explored[y][x] = true;
+                }
+            }
+        }
+    }
+
+    for (int y = startY; y <= endY; ++y) {
+        for (int x = startX; x <= endX; ++x) {
+            const bool explored = !m_explored.isEmpty() ? m_explored.at(y).at(x) : false;
+            const int dx = x - player->getX();
+            const int dy = y - player->getY();
+            const bool visibleNow = (dx * dx + dy * dy) <= (VISIBILITY_RADIUS_TILES * VISIBILITY_RADIUS_TILES);
+
+            QColor overlay;
+            if (!explored) {
+                overlay = QColor(0, 0, 0, 235);
+            } else if (!visibleNow) {
+                overlay = QColor(0, 0, 0, 170);
+            } else {
+                continue;
+            }
+
+            const int screenX = x * TILE_SIZE - camX;
+            const int screenY = y * TILE_SIZE - camY;
+            p.fillRect(QRect(screenX, screenY, TILE_SIZE, TILE_SIZE), overlay);
+        }
+    }
     p.restore();
 }
 

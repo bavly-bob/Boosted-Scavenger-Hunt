@@ -39,6 +39,7 @@ set(PROJECT_SOURCES
         systems/include/LevelLoader.h systems/src/LevelLoader.cpp
         systems/include/ClueManager.h systems/src/ClueManager.cpp
         systems/include/InputHandler.h systems/src/InputHandler.cpp
+        systems/include/SpriteManager.h systems/src/SpriteManager.cpp
         utils/Enums.h
 )
 
