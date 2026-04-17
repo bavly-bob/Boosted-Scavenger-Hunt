@@ -1,0 +1,122 @@
+@startuml
+skinparam Style strictuml
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+hide empty members
+
+package "Enums" {
+  enum GameState {
+    START
+    PLAYING
+    PAUSED
+    GAME_OVER
+    WIN
+  }
+
+  enum Difficulty {
+    EASY
+    NORMAL
+    HARD
+  }
+
+  enum Direction {
+    None
+    Up
+    Down
+    Left
+    Right
+  }
+}
+
+package "Core" {
+  abstract class GameObject {
+    # m_x : int
+    # m_y : int
+    {abstract} + getType() : QString
+    {abstract} + draw(painter, cellSize)
+  }
+
+  class Level {
+    - m_name : QString
+    - m_width : int
+    - m_height : int
+    - m_timeLimit : int
+    - m_spawnX : int
+    - m_spawnY : int
+    + isWalkable(x, y) : bool
+  }
+
+  class Game {
+    - m_state : GameState
+    - m_difficulty : Difficulty
+    - m_score : int
+    - m_timeRemaining : int
+    - m_currentLevelIndex : int
+    + startNewGame(diff)
+    + handleInput(dir)
+    + pause()
+    + resume()
+  }
+}
+
+package "Gameplay" {
+  class Player
+  class Coin
+  class Wall
+  class TriggerWall
+  class HiddenWall
+  class TreasureRoom
+  class ClueTrigger
+}
+
+package "Systems" {
+  class LevelLoader {
+    + loadFromJson(filePath) : Level
+    + getAvailableLevels(levelsDir) : QStringList
+  }
+
+  class ClueManager {
+    + loadClues(cluesArray)
+    + checkCoinClues(coinsCollected) : QStringList
+    + checkPositionClue(x, y) : QStringList
+  }
+
+  class InputHandler {
+    + keyToDirection(qtKey) : Direction
+  }
+}
+
+package "UI" {
+  class MainMenu
+  class GameWindow
+  class PauseOverlay
+  class GameOverOverlay
+}
+
+GameObject <|-- Player
+GameObject <|-- Coin
+GameObject <|-- Wall
+Wall <|-- TriggerWall
+Wall <|-- HiddenWall
+GameObject <|-- TreasureRoom
+GameObject <|-- ClueTrigger
+
+GameWindow *-- Game
+Game *-- Level
+Game *-- Player
+Game ..> ClueManager
+Game ..> LevelLoader
+Game ..> GameState
+Game ..> Difficulty
+
+Level *-- Coin
+Level *-- Wall
+Level *-- TriggerWall
+Level *-- HiddenWall
+Level *-- TreasureRoom
+Level *-- ClueTrigger
+
+InputHandler ..> Direction
+
+@enduml
+
