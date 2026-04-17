@@ -47,6 +47,8 @@ private:
 
     static constexpr int HUD_HEIGHT = 72;
     static constexpr int TILE_SIZE = 32;
+    static constexpr int VIEWPORT_WIDTH = 800;
+    static constexpr int VIEWPORT_HEIGHT = 600;
 };
 
 #endif // GAMEWINDOW_H

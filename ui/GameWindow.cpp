@@ -103,7 +103,7 @@ GameWindow::GameWindow(QWidget *parent)
         emit quitToMainMenuRequested();
     });
 
-    setFixedSize(600, 520);
+    setFixedSize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
 }
 
 void GameWindow::startNewGame(Difficulty difficulty)
@@ -167,12 +167,35 @@ void GameWindow::paintEvent(QPaintEvent *event)
         return;
     }
 
-    // Grid (temporary full render; Phase 2 will add camera + culling)
     p.save();
     p.translate(0, HUD_HEIGHT);
-    for (int y = 0; y < level->getHeight(); ++y) {
-        for (int x = 0; x < level->getWidth(); ++x) {
-            const QRect cell(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    // Camera + tile culling (render only visible tiles).
+    const int mapPixelW = level->getWidth() * TILE_SIZE;
+    const int mapPixelH = level->getHeight() * TILE_SIZE;
+
+    const int viewPixelW = width();
+    const int viewPixelH = height() - HUD_HEIGHT;
+
+    const int playerPxX = player->getX() * TILE_SIZE + TILE_SIZE / 2;
+    const int playerPxY = player->getY() * TILE_SIZE + TILE_SIZE / 2;
+
+    int camX = playerPxX - viewPixelW / 2;
+    int camY = playerPxY - viewPixelH / 2;
+    camX = qBound(0, camX, qMax(0, mapPixelW - viewPixelW));
+    camY = qBound(0, camY, qMax(0, mapPixelH - viewPixelH));
+
+    // Convert camera pixels -> tile bounds.
+    const int startX = qMax(0, camX / TILE_SIZE);
+    const int startY = qMax(0, camY / TILE_SIZE);
+    const int endX = qMin(level->getWidth() - 1, (camX + viewPixelW + TILE_SIZE - 1) / TILE_SIZE);
+    const int endY = qMin(level->getHeight() - 1, (camY + viewPixelH + TILE_SIZE - 1) / TILE_SIZE);
+
+    // Draw base tiles only inside visible bounds.
+    for (int y = startY; y <= endY; ++y) {
+        for (int x = startX; x <= endX; ++x) {
+            const int screenX = x * TILE_SIZE - camX;
+            const int screenY = y * TILE_SIZE - camY;
+            const QRect cell(screenX, screenY, TILE_SIZE, TILE_SIZE);
             const QColor base = ((x + y) % 2 == 0) ? QColor(255, 255, 255, 18) : QColor(0, 0, 0, 18);
             p.fillRect(cell, base);
             p.setPen(QPen(QColor(0, 0, 0, 60), 1));
@@ -182,10 +205,20 @@ void GameWindow::paintEvent(QPaintEvent *event)
 
     for (GameObject* obj : level->getObjects()) {
         if (obj) {
-            obj->draw(p, TILE_SIZE);
+            const int ox = obj->getX();
+            const int oy = obj->getY();
+            if (ox >= startX && ox <= endX && oy >= startY && oy <= endY) {
+                p.save();
+                p.translate(-camX, -camY);
+                obj->draw(p, TILE_SIZE);
+                p.restore();
+            }
         }
     }
+    p.save();
+    p.translate(-camX, -camY);
     player->draw(p, TILE_SIZE);
+    p.restore();
     p.restore();
 }
 
@@ -270,12 +303,8 @@ void GameWindow::ensureLevelsConfigured()
 
 void GameWindow::resizeToCurrentLevel()
 {
-    const Level* level = m_game->level();
-    if (!level || level->getWidth() <= 0 || level->getHeight() <= 0) {
-        return;
-    }
-
-    setFixedSize(level->getWidth() * TILE_SIZE, HUD_HEIGHT + level->getHeight() * TILE_SIZE);
+    // Phase 2+: viewport stays fixed; camera determines what part of the map is visible.
+    setFixedSize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
     m_pauseOverlay->setGeometry(rect());
     m_gameOverOverlay->setGeometry(rect());
 }
