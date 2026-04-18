@@ -45,18 +45,32 @@ void Player::draw(QPainter& painter, int cellSize) const
         const AnimationState drawSt = (m_animator.animState() == AnimationState::Idle)
                                       ? m_animator.lastDir()
                                       : m_animator.animState();
-        const QString clip = PlayerAnimator::clipName(drawSt);
+        const QString clipKey = PlayerAnimator::clipName(drawSt);
 
-        const AnimationClip* c = m_sprites->clip(clip);
-        if (c) {
+        const AnimationClip* c = m_sprites->clip(clipKey);
+        if (c && c->frameCount > 0) {
+            const int frame = (m_animator.animState() == AnimationState::Idle)
+                              ? 0
+                              : (m_animator.animFrame() % c->frameCount);
+
+            // ── Individual-frame mode ────────────────────────────────────────
+            // When loaded from separate PNGs, each frame is stored under
+            //   "<clipKey>_frame_<N>"  and the pixmap IS the full tile.
+            const QString frameKey = QString("%1_frame_%2").arg(clipKey).arg(frame);
+            const QPixmap& framePix = m_sprites->sprite(frameKey);
+            if (!framePix.isNull()) {
+                painter.drawPixmap(QRect(px, py, cellSize, cellSize), framePix,
+                                   framePix.rect());
+                return;
+            }
+
+            // ── Sprite-sheet mode ────────────────────────────────────────────
+            // Traditional sheet: all frames in one pixmap, sliced by srcY + frameWidth.
             const QPixmap& sheet = m_sprites->sprite(c->spriteKey);
             if (!sheet.isNull()) {
-                const int frame = (m_animator.animState() == AnimationState::Idle)
-                                  ? 0
-                                  : (m_animator.animFrame() % c->frameCount);
-                const QRect srcRect(frame * c->frameWidth, c->srcY, c->frameWidth, c->frameHeight);
-                const QRect dstRect(px, py, cellSize, cellSize);
-                painter.drawPixmap(dstRect, sheet, srcRect);
+                const QRect srcRect(frame * c->frameWidth, c->srcY,
+                                    c->frameWidth, c->frameHeight);
+                painter.drawPixmap(QRect(px, py, cellSize, cellSize), sheet, srcRect);
                 return;
             }
         }

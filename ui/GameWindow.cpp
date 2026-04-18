@@ -195,6 +195,62 @@ GameWindow::GameWindow(QWidget *parent)
 // ─────────────────────────────────────────────────────────────────────────────
 // Asset loading
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: load individual frame PNGs from  assetsDir/player/<dir>/frame_0.png …
+// Returns true if at least one frame was loaded and a clip was registered.
+static bool loadPlayerDirectionFrames(SpriteManager& sm,
+                                      const QString&  assetsDir,
+                                      const char*     dirName,
+                                      const char*     clipKey,
+                                      int             tileSize)
+{
+    const QString folder = assetsDir + "/player/" + dirName;
+    QVector<QPixmap> frames;
+    for (int i = 0; i < 8; ++i) {                 // try up to 8 frames
+        const QString path = folder + QString("/frame_%1.png").arg(i);
+        if (!QFile::exists(path)) break;
+        QImage img(path);
+        if (img.isNull()) break;
+        // Strip background: mask out pixel (0,0) colour only if it differs
+        // clearly from the sprite content (alpha channel is preferred).
+        QPixmap pix;
+        if (img.hasAlphaChannel()) {
+            pix = QPixmap::fromImage(img);
+        } else {
+            // Use a colour-key mask only when there is no alpha channel.
+            QColor bgColor = img.pixelColor(0, 0);
+            pix = QPixmap::fromImage(img);
+            pix.setMask(pix.createMaskFromColor(bgColor, Qt::MaskOutColor));
+        }
+        if (!pix.isNull()) {
+            pix = pix.scaled(tileSize, tileSize,
+                             Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            frames.append(pix);
+        }
+    }
+
+    if (frames.isEmpty()) return false;
+
+    // Store each frame under a unique cache key and build a virtual clip.
+    // We use individual pixmaps per frame so there is no sheet slicing needed.
+    // The AnimationClip still points to the first frame's key; Player::draw()
+    // is aware of the per-frame key pattern when individual files are used.
+    for (int i = 0; i < frames.size(); ++i) {
+        sm.loadPixmap(QString("%1_frame_%2").arg(clipKey).arg(i), frames[i]);
+    }
+
+    // Register a clip that covers all loaded frames (srcY=0, full tile size).
+    AnimationClip c;
+    c.spriteKey   = QString("%1_frame_0").arg(clipKey); // first-frame key
+    c.frameCount  = frames.size();
+    c.frameWidth  = tileSize;
+    c.frameHeight = tileSize;
+    c.srcY        = 0;
+    c.fps         = 8;
+    sm.registerClip(QString(clipKey), c);
+    return true;
+}
+
 void GameWindow::loadAssets()
 {
     if (m_assetsLoaded) return;
@@ -203,8 +259,7 @@ void GameWindow::loadAssets()
     const QString assetsDir = findAssetsDir();
     if (assetsDir.isEmpty()) return;
 
-    // Load wall sprite sheet (128×32 → 4 variants of 32×32).
-    // Slice horizontally and insert each variant individually.
+    // ── Wall sprite sheet (128×32 → 4 variants of 32×32) ──────────────────
     const QString wallSheet = assetsDir + "/wall_sprites.png";
     QPixmap wallPix(wallSheet);
     if (!wallPix.isNull()) {
@@ -219,87 +274,128 @@ void GameWindow::loadAssets()
         }
     }
 
-    // Load player sprite sheet (128×160 → 5 rows × 4 frames of 32×32).
-    const QString playerSheet = assetsDir + "/player_sprites.png";
-    if (QFile::exists(playerSheet)) {
-        QImage playerImg(playerSheet);
-        if (!playerImg.isNull()) {
-            QColor bgColor = playerImg.pixelColor(0, 0);
-            QPixmap fullPix = QPixmap::fromImage(playerImg);
-            fullPix.setMask(fullPix.createMaskFromColor(bgColor, Qt::MaskOutColor));
-            m_spriteManager.loadPixmap("player_sheet", fullPix);
-        } else {
-            m_spriteManager.load("player_sheet", playerSheet);
-        }
-        const QPixmap& px = m_spriteManager.sprite("player_sheet");
+    // ── Player sprites ─────────────────────────────────────────────────────
+    // Preferred: individual PNG files under  assets/player/<dir>/frame_N.png
+    // Fallback:  sprite sheet at            assets/player_sprites.png
+    //
+    // Supported direction folders:  down, up, left, right, idle
+    //
+    const struct { const char* folder; const char* clip; } playerDirs[] = {
+        { "down",  "player_move_down"  },
+        { "up",    "player_move_up"    },
+        { "left",  "player_move_left"  },
+        { "right", "player_move_right" },
+        { "idle",  "player_idle"       },
+    };
 
-        // Auto-detect cell size: sheet is 5 rows x 4 columns
-        const int ROWS = 5, COLS = 4;
-        const int fw = px.isNull() ? 32 : px.width()  / COLS;
-        const int fh = px.isNull() ? 32 : px.height() / ROWS;
-
-        // Row layout (matches reference image):
-        //  0 = walk down, 1 = walk up, 2 = walk left, 3 = walk right, 4 = idle/alt
-        const struct { const char* name; int row; } playerClips[] = {
-            { "player_move_down",  0 },
-            { "player_move_up",    1 },
-            { "player_move_left",  2 },
-            { "player_move_right", 3 },
-            { "player_idle",       4 },
-        };
-        for (const auto& entry : playerClips) {
-            AnimationClip c;
-            c.spriteKey   = "player_sheet";
-            c.frameCount  = COLS;
-            c.frameWidth  = fw;
-            c.frameHeight = fh;
-            c.srcY        = entry.row * fh;
-            c.fps         = 8;
-            m_spriteManager.registerClip(QString(entry.name), c);
+    bool anyPlayerFrameLoaded = false;
+    for (const auto& entry : playerDirs) {
+        if (loadPlayerDirectionFrames(m_spriteManager, assetsDir,
+                                      entry.folder, entry.clip, TILE_SIZE)) {
+            anyPlayerFrameLoaded = true;
         }
     }
 
+    // Fall back to the old single sprite sheet if no individual files exist.
+    if (!anyPlayerFrameLoaded) {
+        const QString playerSheet = assetsDir + "/player_sprites.png";
+        if (QFile::exists(playerSheet)) {
+            QImage playerImg(playerSheet);
+            if (!playerImg.isNull()) {
+                // Use alpha if available; otherwise use top-left colour key.
+                QPixmap fullPix;
+                if (playerImg.hasAlphaChannel()) {
+                    fullPix = QPixmap::fromImage(playerImg);
+                } else {
+                    fullPix = QPixmap::fromImage(playerImg);
+                    QColor bgColor = playerImg.pixelColor(0, 0);
+                    fullPix.setMask(fullPix.createMaskFromColor(bgColor, Qt::MaskOutColor));
+                }
+                m_spriteManager.loadPixmap("player_sheet", fullPix);
+            } else {
+                m_spriteManager.load("player_sheet", playerSheet);
+            }
+
+            const QPixmap& px = m_spriteManager.sprite("player_sheet");
+            if (!px.isNull()) {
+                // Sheet layout: 5 rows × 4 columns (down/up/left/right/idle)
+                const int ROWS = 5, COLS = 4;
+                const int fw = px.width()  / COLS;
+                const int fh = px.height() / ROWS;
+
+                const struct { const char* name; int row; } sheetClips[] = {
+                    { "player_move_down",  0 },
+                    { "player_move_up",    1 },
+                    { "player_move_left",  2 },
+                    { "player_move_right", 3 },
+                    { "player_idle",       4 },
+                };
+                for (const auto& e : sheetClips) {
+                    AnimationClip c;
+                    c.spriteKey   = "player_sheet";
+                    c.frameCount  = COLS;
+                    c.frameWidth  = fw;
+                    c.frameHeight = fh;
+                    c.srcY        = e.row * fh;
+                    c.fps         = 8;
+                    m_spriteManager.registerClip(QString(e.name), c);
+                }
+            }
+            // If the sheet is also null/corrupt, no clips get registered and
+            // Player::draw() will use the procedural circle fallback — always visible.
+        }
+    }
+
+    // ── Enemy sprite sheet ─────────────────────────────────────────────────
     const QString enemySheet = assetsDir + "/enemy_sprites.png";
     if (QFile::exists(enemySheet)) {
         QImage enemyImg(enemySheet);
         if (!enemyImg.isNull()) {
-            QColor bgColor = enemyImg.pixelColor(0, 0);
-            QPixmap fullPix = QPixmap::fromImage(enemyImg);
-            fullPix.setMask(fullPix.createMaskFromColor(bgColor, Qt::MaskOutColor));
+            QPixmap fullPix;
+            if (enemyImg.hasAlphaChannel()) {
+                fullPix = QPixmap::fromImage(enemyImg);
+            } else {
+                QColor bgColor = enemyImg.pixelColor(0, 0);
+                fullPix = QPixmap::fromImage(enemyImg);
+                fullPix.setMask(fullPix.createMaskFromColor(bgColor, Qt::MaskOutColor));
+            }
             m_spriteManager.loadPixmap("enemy_sheet", fullPix);
         } else {
             m_spriteManager.load("enemy_sheet", enemySheet);
         }
+
         const QPixmap& ex = m_spriteManager.sprite("enemy_sheet");
+        if (!ex.isNull()) {
+            const int ROWS = 6, COLS = 4;
+            const int fw = ex.width()  / COLS;
+            const int fh = ex.height() / ROWS;
 
-        const int ROWS = 6, COLS = 4;
-        const int fw = ex.isNull() ? 32 : ex.width()  / COLS;
-        const int fh = ex.isNull() ? 32 : ex.height() / ROWS;
-
-        const struct { const char* name; int row; } enemyClips[] = {
-            { "enemy_idle",        0 },
-            { "enemy_move_down",   1 },
-            { "enemy_move_up",     2 },
-            { "enemy_move_left",   3 },
-            { "enemy_move_right",  4 },
-            { "enemy_die",         5 },
-        };
-        for (const auto& entry : enemyClips) {
-            AnimationClip c;
-            c.spriteKey   = "enemy_sheet";
-            c.frameCount  = COLS;
-            c.frameWidth  = fw;
-            c.frameHeight = fh;
-            c.srcY        = entry.row * fh;
-            c.fps         = 8;
-            m_spriteManager.registerClip(QString(entry.name), c);
+            const struct { const char* name; int row; } enemyClips[] = {
+                { "enemy_idle",        0 },
+                { "enemy_move_down",   1 },
+                { "enemy_move_up",     2 },
+                { "enemy_move_left",   3 },
+                { "enemy_move_right",  4 },
+                { "enemy_die",         5 },
+            };
+            for (const auto& entry : enemyClips) {
+                AnimationClip c;
+                c.spriteKey   = "enemy_sheet";
+                c.frameCount  = COLS;
+                c.frameWidth  = fw;
+                c.frameHeight = fh;
+                c.srcY        = entry.row * fh;
+                c.fps         = 8;
+                m_spriteManager.registerClip(QString(entry.name), c);
+            }
         }
     }
-}
+} // end loadAssets()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sprite injection
 // ─────────────────────────────────────────────────────────────────────────────
+
 void GameWindow::injectSprites()
 {
     const Level*  level  = m_game->level();
