@@ -20,6 +20,7 @@ public:
     explicit GameWindow(QWidget *parent = nullptr);
 
     void startNewGame(Difficulty difficulty);
+    bool loadSavedGame(const QString& filepath);
 
 signals:
     void quitToMainMenuRequested();

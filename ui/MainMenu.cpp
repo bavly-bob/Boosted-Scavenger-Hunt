@@ -3,10 +3,12 @@
 #include <QLabel>
 #include <QPainter>
 #include <QLinearGradient>
+#include <QFile>
 #include <QGraphicsDropShadowEffect>
 #include <QSpacerItem>
 
-MainMenu::MainMenu(QWidget *parent) : QWidget(parent)
+MainMenu::MainMenu(QWidget *parent)
+    : QWidget(parent), m_continueBtn(nullptr)
 {
     setWindowTitle("Scavenger Hunt");
     resize(550, 620);
@@ -62,6 +64,11 @@ MainMenu::MainMenu(QWidget *parent) : QWidget(parent)
     QPushButton *easy   = createButton("EASY",   QColor(80, 200, 120));
     QPushButton *medium = createButton("MEDIUM", QColor(230, 180,  60));
     QPushButton *hard   = createButton("HARD",   QColor(220,  80,  70));
+    
+    m_continueBtn = createButton("CONTINUE", QColor(60, 120, 200));
+    btnLayout->addWidget(m_continueBtn, 0, Qt::AlignCenter);
+    connect(m_continueBtn, &QPushButton::clicked, this, [this]{ emit continueRequested(); });
+
     QPushButton *quit   = createButton("QUIT GAME", QColor(100, 100, 100));
 
     btnLayout->addWidget(easy,   0, Qt::AlignCenter);
@@ -85,16 +92,25 @@ MainMenu::MainMenu(QWidget *parent) : QWidget(parent)
 }
 
 // --- Gradient background (no animations) ---
-void MainMenu::paintEvent(QPaintEvent *)
+void MainMenu::paintEvent(QPaintEvent *event)
 {
+    Q_UNUSED(event);
     QPainter p(this);
-    QLinearGradient grad(0, 0, width(), height());
-    grad.setColorAt(0.0, QColor(30,  10, 80));
-    grad.setColorAt(0.3, QColor(60,  20, 110));
-    grad.setColorAt(0.5, QColor(20,  60, 100));
-    grad.setColorAt(0.7, QColor(10,  80,  90));
-    grad.setColorAt(1.0, QColor(15,  50,  70));
+
+    // Deep, dark gradient background
+    QLinearGradient grad(0, 0, 0, height());
+    grad.setColorAt(0.0, QColor(15, 20, 30));
+    grad.setColorAt(1.0, QColor(5, 5, 10));
+
     p.fillRect(rect(), grad);
+}
+
+void MainMenu::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (m_continueBtn) {
+        m_continueBtn->setVisible(QFile::exists("save.json"));
+    }
 }
 
 // --- Styled button with accent color ---

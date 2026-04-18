@@ -292,6 +292,28 @@ void GameWindow::startNewGame(Difficulty difficulty)
     setFocus();
 }
 
+bool GameWindow::loadSavedGame(const QString& filepath)
+{
+    loadAssets();
+    ensureLevelsConfigured();
+    m_statusText.clear();
+    m_pauseOverlay->hide();
+    m_gameOverOverlay->hide();
+
+    if (!m_game->loadGame(filepath)) {
+        return false;
+    }
+    
+    resetExplored();
+    resizeToCurrentLevel();
+    snapCameraToPlayer();
+    injectSprites();
+
+    show();
+    setFocus();
+    return true;
+}
+
 void GameWindow::snapCameraToPlayer()
 {
     const Level*  level  = m_game->level();
@@ -621,6 +643,7 @@ void GameWindow::mousePressEvent(QMouseEvent *event)
 
         if (quitBtn.contains(event->pos())) {
             m_game->pause();
+            m_game->saveGame("save.json");
             m_gameOverOverlay->hide();
             hide();
             emit quitToMainMenuRequested();
