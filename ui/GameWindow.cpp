@@ -114,7 +114,8 @@ GameWindow::GameWindow(QWidget *parent)
       m_renderTimer(new QTimer(this)),
       m_cameraPx(0.0, 0.0),
       m_levelsConfigured(false),
-      m_assetsLoaded(false)
+      m_assetsLoaded(false),
+      m_statusIsAiHint(false)
 {
     setWindowTitle("Scavenger Hunt");
     setFocusPolicy(Qt::StrongFocus);
@@ -426,6 +427,7 @@ void GameWindow::startNewGame(Difficulty difficulty)
     loadAssets();
     ensureLevelsConfigured();
     m_statusText.clear();
+    m_statusIsAiHint = false;
     m_pauseOverlay->hide();
     m_gameOverOverlay->hide();
 
@@ -444,6 +446,7 @@ bool GameWindow::loadSavedGame(const QString& filepath)
     loadAssets();
     ensureLevelsConfigured();
     m_statusText.clear();
+    m_statusIsAiHint = false;
     m_pauseOverlay->hide();
     m_gameOverOverlay->hide();
 
@@ -570,12 +573,39 @@ void GameWindow::paintEvent(QPaintEvent *event)
 
         // Status text
         if (!m_statusText.isEmpty()) {
-            QFont statusFont = p.font();
-            statusFont.setItalic(true);
-            p.setFont(statusFont);
-            p.setPen(QColor(230, 200, 120));
-            p.drawText(QRect(12, 52, width() - 24, 16),
-                       Qt::AlignLeft | Qt::AlignVCenter, m_statusText);
+            if (m_statusIsAiHint) {
+                QRect hintRect(12, 50, width() - 24, 20);
+                p.setBrush(QColor(24, 38, 56, 220));
+                p.setPen(QPen(QColor(120, 200, 255), 1));
+                p.drawRoundedRect(hintRect, 4, 4);
+
+                QFont labelFont = p.font();
+                labelFont.setBold(true);
+                labelFont.setPointSize(8);
+                p.setFont(labelFont);
+                p.setPen(QColor(170, 225, 255));
+                p.drawText(QRect(18, 52, 90, 16),
+                           Qt::AlignLeft | Qt::AlignVCenter, "[*] AI Hint");
+
+                QString hintBody = m_statusText;
+                if (hintBody.startsWith("AI Hint:", Qt::CaseInsensitive)) {
+                    hintBody = hintBody.mid(QString("AI Hint:").size()).trimmed();
+                }
+
+                QFont bodyFont = p.font();
+                bodyFont.setBold(false);
+                p.setFont(bodyFont);
+                p.setPen(QColor(225, 235, 245));
+                p.drawText(QRect(108, 52, width() - 126, 16),
+                           Qt::AlignLeft | Qt::AlignVCenter, hintBody);
+            } else {
+                QFont statusFont = p.font();
+                statusFont.setItalic(true);
+                p.setFont(statusFont);
+                p.setPen(QColor(230, 200, 120));
+                p.drawText(QRect(12, 52, width() - 24, 16),
+                           Qt::AlignLeft | Qt::AlignVCenter, m_statusText);
+            }
         }
 
         // Draw HUD buttons (Restart and Quit)
@@ -847,18 +877,21 @@ void GameWindow::mousePressEvent(QMouseEvent *event)
 void GameWindow::onClueRevealed(const QString& text)
 {
     m_statusText = text;
+    m_statusIsAiHint = text.startsWith("AI Hint:", Qt::CaseInsensitive);
     update();
 }
 
 void GameWindow::onWallOpened()
 {
     m_statusText = "You hear stone grinding... a passage opens!";
+    m_statusIsAiHint = false;
     update();
 }
 
 void GameWindow::onTreasureUnlocked()
 {
     m_statusText = "Treasure unlocked! Find the treasure room!";
+    m_statusIsAiHint = false;
     update();
 }
 

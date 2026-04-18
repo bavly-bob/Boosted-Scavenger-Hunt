@@ -62,6 +62,7 @@ private:
     QString  m_statusText;
     bool     m_levelsConfigured;
     bool     m_assetsLoaded;
+    bool     m_statusIsAiHint;
 
     static constexpr int    HUD_HEIGHT             = 72;
     static constexpr int    TILE_SIZE               = 32;

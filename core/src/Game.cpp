@@ -220,6 +220,10 @@ void Game::handleInput(Direction dir)
     for (const QString& clue : interaction.revealedClues) {
         if (m_aiHelper && m_aiHelper->isEnabled()) {
             m_aiHelper->rephrase(clue, [this](QString transformed) {
+                transformed = transformed.trimmed();
+                if (!transformed.startsWith("AI Hint:", Qt::CaseInsensitive)) {
+                    transformed.prepend("AI Hint: ");
+                }
                 emit clueRevealed(transformed);
             });
         } else {
