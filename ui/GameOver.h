@@ -15,7 +15,6 @@ public:
     explicit GameOver(QWidget *parent = nullptr);
     ~GameOver();
 
-    // Preliminary functions
     void setScore(int score);
     void setGameWon(bool won);
 

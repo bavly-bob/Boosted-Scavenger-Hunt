@@ -15,7 +15,6 @@ public:
     explicit GameScreen(QWidget *parent = nullptr);
     ~GameScreen();
 
-    // Preliminary functions
     void startGame();
     void pauseGame();
     void resumeGame();

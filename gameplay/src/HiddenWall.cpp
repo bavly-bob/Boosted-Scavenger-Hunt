@@ -18,7 +18,7 @@ void HiddenWall::draw(QPainter& painter, int cellSize) const
     if (m_open) {
         return;
     }
-    // Hidden walls should visually blend with normal walls until opened.
+    // Hidden walls intentionally render as normal walls until triggered.
     Wall::draw(painter, cellSize);
 }
 

@@ -4,7 +4,6 @@
 
 class QPainter;
 
-// Abstract base class for any object positioned on the level grid.
 class GameObject {
 protected:
     int m_x;

@@ -4,10 +4,6 @@
 
 #include <QString>
 
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constructor
-// ─────────────────────────────────────────────────────────────────────────────
 PlayerAnimator::PlayerAnimator()
     : m_animState(AnimationState::Idle),
       m_lastDir(AnimationState::MovingDown),
@@ -16,9 +12,6 @@ PlayerAnimator::PlayerAnimator()
 {
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// notifyMoveStarted — call once at the start of each tile step
-// ─────────────────────────────────────────────────────────────────────────────
 void PlayerAnimator::notifyMoveStarted(AnimationState dir)
 {
     m_animState = dir;
@@ -27,18 +20,12 @@ void PlayerAnimator::notifyMoveStarted(AnimationState dir)
     m_animTick  = ANIM_TICKS_PER_FRAME;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// notifyArrived — call once when the player finishes a tile move
-// ─────────────────────────────────────────────────────────────────────────────
 void PlayerAnimator::notifyArrived()
 {
     m_animState = AnimationState::Idle;
     m_animFrame = 0;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// tick — call once per render frame (≈16 ms) to advance the walk cycle
-// ─────────────────────────────────────────────────────────────────────────────
 void PlayerAnimator::tick(const SpriteManager* sprites)
 {
     if (m_animState == AnimationState::Idle) {
@@ -46,7 +33,6 @@ void PlayerAnimator::tick(const SpriteManager* sprites)
         return;
     }
 
-    // Determine clip length
     int clipLen = DEFAULT_CLIP_LEN;
     if (sprites) {
         const QString name = clipName(m_animState);
@@ -61,10 +47,7 @@ void PlayerAnimator::tick(const SpriteManager* sprites)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// clipName — maps an AnimationState to the SpriteManager clip key
-// ─────────────────────────────────────────────────────────────────────────────
-/*static*/ QString PlayerAnimator::clipName(AnimationState state)
+QString PlayerAnimator::clipName(AnimationState state)
 {
     switch (state) {
     case AnimationState::MovingUp:    return QStringLiteral("player_move_up");

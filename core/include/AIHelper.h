@@ -6,8 +6,6 @@
 
 class QNetworkAccessManager;
 
-// Simple AI helper that can rephrase a clue using an external API.
-// Reads API key from environment variable `AI_API_KEY` and optional `AI_API_URL`.
 class AIHelper : public QObject {
     Q_OBJECT
 
@@ -21,6 +19,5 @@ public:
 
     bool isEnabled() const;
 
-    // Rephrase `text` asynchronously; callback will be called with the result.
     void rephrase(const QString& text, std::function<void(QString)> callback);
 };

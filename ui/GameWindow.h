@@ -46,7 +46,7 @@ private:
     void hidePauseOverlay();
     void snapCameraToPlayer();
     void loadAssets();
-    void injectSprites();  // Injects m_spriteManager into player + walls after level load.
+    void injectSprites();
     void resetExplored();
 
     Game*             m_game;

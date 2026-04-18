@@ -7,9 +7,6 @@
 #include <QPainter>
 #include <cmath>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constructor
-// ─────────────────────────────────────────────────────────────────────────────
 Player::Player(int x, int y)
     : GameObject(x, y),
       m_coinsCollected(0),
@@ -31,31 +28,24 @@ QString Player::getType() const
     return "Player";
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// draw — uses sub-tile pixel position for smooth rendering
-// ─────────────────────────────────────────────────────────────────────────────
 void Player::draw(QPainter& painter, int cellSize) const
 {
     const int px = static_cast<int>(std::round(m_pixelX * cellSize));
     const int py = static_cast<int>(std::round(m_pixelY * cellSize));
 
-    // Attempt sprite-based rendering
     if (m_sprites) {
-        // When idle, draw the last-direction clip at frame 0.
-        const AnimationState drawSt = (m_animator.animState() == AnimationState::Idle)
-                                      ? m_animator.lastDir()
-                                      : m_animator.animState();
-        const QString clipKey = PlayerAnimator::clipName(drawSt);
+        const AnimationState drawState = (m_animator.animState() == AnimationState::Idle)
+                                         ? m_animator.lastDir()
+                                         : m_animator.animState();
+        const QString clipKey = PlayerAnimator::clipName(drawState);
 
-        const AnimationClip* c = m_sprites->clip(clipKey);
-        if (c && c->frameCount > 0) {
+        const AnimationClip* clip = m_sprites->clip(clipKey);
+        if (clip && clip->frameCount > 0) {
             const int frame = (m_animator.animState() == AnimationState::Idle)
                               ? 0
-                              : (m_animator.animFrame() % c->frameCount);
+                              : (m_animator.animFrame() % clip->frameCount);
 
-            // ── Individual-frame mode ────────────────────────────────────────
-            // When loaded from separate PNGs, each frame is stored under
-            //   "<clipKey>_frame_<N>"  and the pixmap IS the full tile.
+            // Individual-frame mode stores each frame as "<clipKey>_frame_<N>".
             const QString frameKey = QString("%1_frame_%2").arg(clipKey).arg(frame);
             const QPixmap& framePix = m_sprites->sprite(frameKey);
             if (!framePix.isNull()) {
@@ -64,19 +54,16 @@ void Player::draw(QPainter& painter, int cellSize) const
                 return;
             }
 
-            // ── Sprite-sheet mode ────────────────────────────────────────────
-            // Traditional sheet: all frames in one pixmap, sliced by srcY + frameWidth.
-            const QPixmap& sheet = m_sprites->sprite(c->spriteKey);
+            const QPixmap& sheet = m_sprites->sprite(clip->spriteKey);
             if (!sheet.isNull()) {
-                const QRect srcRect(frame * c->frameWidth, c->srcY,
-                                    c->frameWidth, c->frameHeight);
+                const QRect srcRect(frame * clip->frameWidth, clip->srcY,
+                                    clip->frameWidth, clip->frameHeight);
                 painter.drawPixmap(QRect(px, py, cellSize, cellSize), sheet, srcRect);
                 return;
             }
         }
     }
 
-    // ── Procedural fallback ──────────────────────────────────────────────────
     const QRect cellRect(px, py, cellSize, cellSize);
     const int margin = cellSize / 6;
     const QRect body = cellRect.adjusted(margin, margin, -margin, -margin);
@@ -117,14 +104,8 @@ void Player::draw(QPainter& painter, int cellSize) const
     painter.restore();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// updateMovement — called each render frame with delta time in seconds.
-//
-// FIX (lerp pop): we now interpolate from m_prevPixelX/Y (the pixel position
-// recorded at the moment move() was called) rather than from m_x/m_y (which
-// is already snapped to the target tile the instant move() fires).  This
-// eliminates the 1-frame jump when a new step begins mid-animation.
-// ─────────────────────────────────────────────────────────────────────────────
+// Interpolate from the position captured at move start to avoid a one-frame
+// visual snap when logical tile coordinates update immediately.
 void Player::updateMovement(float dt)
 {
     if (!m_isMoving) return;
@@ -137,15 +118,11 @@ void Player::updateMovement(float dt)
         m_isMoving = false;
         m_animator.notifyArrived();
     } else {
-        // Lerp from the previous pixel pos (not the snapped logical pos)
         m_pixelX = m_prevPixelX + (static_cast<float>(m_targetX) - m_prevPixelX) * m_moveProgress;
         m_pixelY = m_prevPixelY + (static_cast<float>(m_targetY) - m_prevPixelY) * m_moveProgress;
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// move — initiates movement to an adjacent tile
-// ─────────────────────────────────────────────────────────────────────────────
 void Player::move(Direction dir, const Level& level)
 {
     int newX = m_targetX;
@@ -162,15 +139,13 @@ void Player::move(Direction dir, const Level& level)
     }
 
     if (!level.isWalkable(newX, newY)) {
-        return; // don't change animator state on a blocked move
+        return;
     }
 
-    // Snapshot current pixel position before updating logical position.
-    // This is the lerp origin; using m_x/m_y after setPosition() would pop.
+    // Capture interpolation origin before setPosition updates tile coordinates.
     m_prevPixelX = m_pixelX;
     m_prevPixelY = m_pixelY;
 
-    // Update logical position immediately (collision / interaction logic reads this)
     setPosition(newX, newY);
 
     m_targetX      = newX;
@@ -200,8 +175,6 @@ bool Player::isAtTarget() const
 {
     return !m_isMoving;
 }
-
-// ── Animation delegation ─────────────────────────────────────────────────────
 
 void Player::advanceAnimation()
 {

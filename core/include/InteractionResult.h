@@ -3,8 +3,6 @@
 #include <QString>
 #include <QStringList>
 
-// Aggregates side-effects of stepping onto a tile, without coupling Game to
-// concrete GameObject types.
 struct InteractionResult {
     QStringList revealedClues;
 

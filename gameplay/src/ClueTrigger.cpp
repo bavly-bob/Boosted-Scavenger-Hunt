@@ -18,8 +18,6 @@ QString ClueTrigger::getType() const
 
 void ClueTrigger::draw(QPainter& painter, int tileSize) const
 {
-    // instead of nothing, draw a question mark icon
-    // if the clue is activated, do not draw the question mark icon
     if (!m_activated) {
         painter.save();
         QRect rect(m_x * tileSize, m_y * tileSize, tileSize, tileSize);
@@ -44,4 +42,3 @@ QString ClueTrigger::getClueText() const
 {
     return m_clueText;
 }
-

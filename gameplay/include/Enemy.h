@@ -12,10 +12,10 @@ class Enemy : public GameObject {
     AnimationState m_animState;
     int            m_animFrame;
     int            m_animTick;
-    
+
     int m_moveTimer;
     int m_moveInterval;
-    
+
     const SpriteManager* m_sprites;
 
 public:
@@ -27,10 +27,10 @@ public:
     void update(Level& level, const Player& player);
     void advanceAnimation();
     void setSpriteManager(const SpriteManager* sm);
-    
+
     AnimationState animState() const { return m_animState; }
     int animFrame() const { return m_animFrame; }
-    
+
     void setDying();
     bool isDead() const;
 };

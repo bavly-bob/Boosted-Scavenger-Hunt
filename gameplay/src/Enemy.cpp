@@ -11,7 +11,7 @@ Enemy::Enemy(int x, int y)
       m_animFrame(0),
       m_animTick(0),
       m_moveTimer(0),
-      m_moveInterval(2), // Move every 2 ticks
+      m_moveInterval(2),
       m_sprites(nullptr)
 {
 }
@@ -27,44 +27,36 @@ void Enemy::draw(QPainter& painter, int cellSize) const
         return;
     }
 
-    // ── Pixel-art skull fallback ─────────────────────────────────────────────
     painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, false); // crisp pixels
+    painter.setRenderHint(QPainter::Antialiasing, false);
 
-    const int x = m_x * cellSize;
-    const int y = m_y * cellSize;
-    const int s = cellSize;
-    const int m = s / 8; // margin
+    const int pixelX = m_x * cellSize;
+    const int pixelY = m_y * cellSize;
+    const int size = cellSize;
+    const int margin = size / 8;
 
-    // Body (dark purple/grey base)
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(60, 30, 80));
-    painter.drawEllipse(x + m, y + m, s - 2*m, s - 2*m);
+    painter.drawEllipse(pixelX + margin, pixelY + margin, size - 2 * margin, size - 2 * margin);
 
-    // Glowing red eyes
-    const int eyeR = qMax(2, s / 10);
-    const int eyeY = y + s * 3 / 8;
-    // Left eye glow
+    const int eyeRadius = qMax(2, size / 10);
+    const int eyeY = pixelY + size * 3 / 8;
     painter.setBrush(QColor(255, 30, 30, 80));
-    painter.drawEllipse(x + s/4 - eyeR - 1, eyeY - eyeR - 1, eyeR*2+2, eyeR*2+2);
-    // Right eye glow
-    painter.drawEllipse(x + 3*s/4 - eyeR - 1, eyeY - eyeR - 1, eyeR*2+2, eyeR*2+2);
-    // Left eye
-    painter.setBrush(QColor(255, 60, 60));
-    painter.drawEllipse(x + s/4 - eyeR, eyeY - eyeR, eyeR*2, eyeR*2);
-    // Right eye
-    painter.drawEllipse(x + 3*s/4 - eyeR, eyeY - eyeR, eyeR*2, eyeR*2);
+    painter.drawEllipse(pixelX + size / 4 - eyeRadius - 1, eyeY - eyeRadius - 1, eyeRadius * 2 + 2, eyeRadius * 2 + 2);
+    painter.drawEllipse(pixelX + 3 * size / 4 - eyeRadius - 1, eyeY - eyeRadius - 1, eyeRadius * 2 + 2, eyeRadius * 2 + 2);
 
-    // Rim outline
+    painter.setBrush(QColor(255, 60, 60));
+    painter.drawEllipse(pixelX + size / 4 - eyeRadius, eyeY - eyeRadius, eyeRadius * 2, eyeRadius * 2);
+    painter.drawEllipse(pixelX + 3 * size / 4 - eyeRadius, eyeY - eyeRadius, eyeRadius * 2, eyeRadius * 2);
+
     painter.setPen(QPen(QColor(120, 60, 160), 1));
     painter.setBrush(Qt::NoBrush);
-    painter.drawEllipse(x + m, y + m, s - 2*m, s - 2*m);
+    painter.drawEllipse(pixelX + margin, pixelY + margin, size - 2 * margin, size - 2 * margin);
 
-    // Death indicator when dying
     if (isDead()) {
         painter.setPen(QPen(QColor(255, 255, 255, 120), 2));
-        painter.drawLine(x + m, y + m, x + s - m, y + s - m);
-        painter.drawLine(x + s - m, y + m, x + m, y + s - m);
+        painter.drawLine(pixelX + margin, pixelY + margin, pixelX + size - margin, pixelY + size - margin);
+        painter.drawLine(pixelX + size - margin, pixelY + margin, pixelX + margin, pixelY + size - margin);
     }
 
     painter.restore();
@@ -78,7 +70,6 @@ void Enemy::update(Level& level, const Player& player)
     if (m_moveTimer < m_moveInterval) return;
     m_moveTimer = 0;
 
-    // Simple pathfinding: move towards player if possible
     int dx = player.getX() - m_x;
     int dy = player.getY() - m_y;
 
@@ -92,7 +83,7 @@ void Enemy::update(Level& level, const Player& player)
         nextX += (dx > 0) ? 1 : -1;
         dir = (dx > 0) ? Direction::Right : Direction::Left;
         if (!level.isWalkable(nextX, nextY)) {
-            nextX = m_x; // reset
+            nextX = m_x;
             nextY += (dy > 0) ? 1 : (dy < 0 ? -1 : 0);
             dir = (dy > 0) ? Direction::Down : (dy < 0 ? Direction::Up : Direction::None);
         }
@@ -100,7 +91,7 @@ void Enemy::update(Level& level, const Player& player)
         nextY += (dy > 0) ? 1 : -1;
         dir = (dy > 0) ? Direction::Down : Direction::Up;
         if (!level.isWalkable(nextX, nextY)) {
-            nextY = m_y; // reset
+            nextY = m_y;
             nextX += (dx > 0) ? 1 : (dx < 0 ? -1 : 0);
             dir = (dx > 0) ? Direction::Right : (dx < 0 ? Direction::Left : Direction::None);
         }
@@ -109,7 +100,7 @@ void Enemy::update(Level& level, const Player& player)
     if (level.isWalkable(nextX, nextY)) {
         m_x = nextX;
         m_y = nextY;
-        
+
         switch (dir) {
         case Direction::Up:    m_animState = AnimationState::MovingUp; break;
         case Direction::Down:  m_animState = AnimationState::MovingDown; break;
@@ -144,7 +135,7 @@ void Enemy::advanceAnimation()
                 m_animTick = 0;
                 m_animFrame++;
                 if (m_animState == AnimationState::Dying && m_animFrame >= clip->frameCount) {
-                    m_animFrame = clip->frameCount - 1; // Stop at last frame of dying
+                    m_animFrame = clip->frameCount - 1;
                 } else {
                     m_animFrame %= clip->frameCount;
                 }

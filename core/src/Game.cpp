@@ -117,7 +117,7 @@ void Game::saveGame(const QString& filepath)
     root["levelIndex"] = m_currentLevelIndex;
     root["difficulty"] = static_cast<int>(m_difficulty);
     root["score"] = m_score;
-    
+
     QJsonDocument doc(root);
     QFile file(filepath);
     if (file.open(QIODevice::WriteOnly)) {
@@ -132,21 +132,21 @@ bool Game::loadGame(const QString& filepath)
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
     }
-    
+
     QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
     file.close();
-    
+
     if (!doc.isObject()) return false;
     QJsonObject root = doc.object();
-    
+
     int levelIndex = root["levelIndex"].toInt(0);
     int diffInt = root["difficulty"].toInt(1);
     m_score = root["score"].toInt(0);
-    
+
     Difficulty diff = Difficulty::NORMAL;
     if (diffInt == 0) diff = Difficulty::EASY;
     else if (diffInt == 2) diff = Difficulty::HARD;
-    
+
     startLevel(levelIndex, diff);
     return true;
 }
@@ -199,7 +199,6 @@ void Game::handleInput(Direction dir)
         return;
     }
 
-    // Check collision with enemies after player moves
     for (Enemy* enemy : m_currentLevel->getEnemies()) {
         if (!enemy->isDead() && enemy->getX() == newPos.x() && enemy->getY() == newPos.y()) {
             m_state = GameState::GAME_OVER;
@@ -331,13 +330,11 @@ void Game::onTick()
         return;
     }
 
-    // Advance enemy logic (enemy animation is also ticked by the render timer)
     if (m_currentLevel) {
         for (Enemy* enemy : m_currentLevel->getEnemies()) {
             enemy->advanceAnimation();
             enemy->update(*m_currentLevel, *m_player);
-            
-            // Check collision with player after enemy moves
+
             if (!enemy->isDead() && m_player && enemy->getX() == m_player->getX() && enemy->getY() == m_player->getY()) {
                 m_state = GameState::GAME_OVER;
                 m_timer->stop();

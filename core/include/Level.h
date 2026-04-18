@@ -30,10 +30,9 @@ class Level {
     int m_spawnX;
     int m_spawnY;
 
-    // Target architecture: layered grids + objects.
     QVector<QVector<int>> m_tiles;
     QVector<QVector<bool>> m_collision;
-    QList<GameObject*> m_objects; // owning
+    QList<GameObject*> m_objects;
 
     QVector<Wall*> m_walls;
     QVector<TriggerWall*> m_triggerWalls;
@@ -43,7 +42,6 @@ class Level {
     QVector<Enemy*> m_enemies;
     TreasureRoom* m_treasureRoom;
 
-    // Fast spatial lookup (tileX,tileY) -> object pointer.
     QHash<quint64, Wall*> m_wallByPos;
     QHash<quint64, TriggerWall*> m_triggerWallByPos;
     QHash<quint64, HiddenWall*> m_hiddenWallByPos;
@@ -91,7 +89,6 @@ public:
     bool isInBounds(int x, int y) const;
     bool isWalkable(int x, int y) const;
 
-    // Checks whether the player can enter a tile; if not, returns a reason.
     bool canPlayerEnter(int x, int y, const Player& player, QString* outReason = nullptr) const;
 
     Wall* wallAt(int x, int y) const;
@@ -101,10 +98,8 @@ public:
     ClueTrigger* clueTriggerAt(int x, int y) const;
     Enemy* enemyAt(int x, int y) const;
 
-    // Applies side-effects for stepping onto a tile (coins, triggers, etc.).
     InteractionResult interactAt(int x, int y, Player& player, ClueManager& clues);
 
-    // ── Chamber support ───────────────────────────────────────────────────
     void addChamber(const Chamber& ch);
     const QVector<Chamber>& getChambers() const;
     int chamberCount() const;
@@ -116,4 +111,3 @@ private:
     void setTileAndCollision(int x, int y, int tileId, bool colliding);
     void addOwnedObject(GameObject* object);
 };
-

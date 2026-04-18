@@ -43,8 +43,6 @@ public:
     void startLevel(int levelIndex, Difficulty diff);
     void nextLevel();
     void restartLevel();
-    
-    // Save/Load
     void saveGame(const QString& filepath);
     bool loadGame(const QString& filepath);
     bool hasSavedGame(const QString& filepath) const;

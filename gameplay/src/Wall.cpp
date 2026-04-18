@@ -20,7 +20,6 @@ void Wall::draw(QPainter& painter, int cellSize) const
 {
     const QRect r(m_x * cellSize, m_y * cellSize, cellSize, cellSize);
 
-    // Attempt sprite-based rendering first.
     if (m_sprites) {
         const QString key = QString("wall_%1").arg(m_tileVariant);
         const QPixmap& pix = m_sprites->sprite(key);
@@ -30,15 +29,14 @@ void Wall::draw(QPainter& painter, int cellSize) const
         }
     }
 
-    // Procedural fallback – draw a styled brick rectangle.
     painter.save();
 
-    // Base colour varies slightly per variant for visual diversity.
+    // Keep wall variants visually distinct when sprite assets are missing.
     static const QColor variantColors[] = {
-        QColor(72,  72,  84),   // 0 – dark stone
-        QColor(60,  80,  60),   // 1 – mossy stone
-        QColor(90,  70,  55),   // 2 – brown brick
-        QColor(55,  55,  75),   // 3 – blue-grey slate
+        QColor(72, 72, 84),
+        QColor(60, 80, 60),
+        QColor(90, 70, 55),
+        QColor(55, 55, 75),
     };
     const int numVariants = static_cast<int>(sizeof(variantColors) / sizeof(variantColors[0]));
     const QColor base = variantColors[m_tileVariant % numVariants];
@@ -47,23 +45,21 @@ void Wall::draw(QPainter& painter, int cellSize) const
     painter.setBrush(base);
     painter.drawRect(r);
 
-    // Top-left highlight edge
     painter.setPen(QPen(base.lighter(140), 1));
-    painter.drawLine(r.topLeft(),     r.topRight());
-    painter.drawLine(r.topLeft(),     r.bottomLeft());
+    painter.drawLine(r.topLeft(), r.topRight());
+    painter.drawLine(r.topLeft(), r.bottomLeft());
 
-    // Bottom-right shadow edge
     painter.setPen(QPen(base.darker(160), 1));
-    painter.drawLine(r.bottomLeft(),  r.bottomRight());
-    painter.drawLine(r.topRight(),    r.bottomRight());
+    painter.drawLine(r.bottomLeft(), r.bottomRight());
+    painter.drawLine(r.topRight(), r.bottomRight());
 
-    // Interior mortar lines (horizontal brick pattern)
     painter.setPen(QPen(base.darker(130), 1));
     const int halfH = r.top() + cellSize / 2;
     painter.drawLine(r.left() + 1, halfH, r.right() - 1, halfH);
-    // Vertical joints staggered per row
+
+    // Stagger vertical joints by row to mimic a brick pattern.
     const int jX = (m_y % 2 == 0) ? r.left() + cellSize / 2 : r.left() + cellSize / 4;
-    painter.drawLine(jX, r.top() + 1,    jX, halfH - 1);
+    painter.drawLine(jX, r.top() + 1, jX, halfH - 1);
     const int jX2 = jX + cellSize / 2;
     if (jX2 < r.right()) {
         painter.drawLine(jX2, halfH + 1, jX2, r.bottom() - 1);

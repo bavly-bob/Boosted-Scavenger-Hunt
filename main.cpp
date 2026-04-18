@@ -8,7 +8,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     MainMenu menu;
     GameWindow *gameWindow = nullptr;
-    
+
     QObject::connect(&menu, &MainMenu::quitRequested, &app, &QApplication::quit);
 
     auto setupGameWindow = [&]() {
@@ -16,15 +16,6 @@ int main(int argc, char *argv[])
             gameWindow = new GameWindow();
             QObject::connect(gameWindow, &GameWindow::quitToMainMenuRequested, &menu, [&]() {
                 gameWindow->hide();
-                // Refresh main menu to potentially show continue button
-                menu.hide();
-                MainMenu* newMenu = new MainMenu();
-                QObject::connect(newMenu, &MainMenu::quitRequested, &app, &QApplication::quit);
-                // Connect new menu signals to the lambdas... wait, this is getting complicated.
-                // Let's just create a function or just re-create MainMenu entirely, or just use the existing one.
-                // Since MainMenu checks for save.json in its constructor, we might want to just hide and show.
-                // If we want it to update, it's better to add a method refresh() to MainMenu.
-                // Let's keep it simple: just show the menu. The player has to restart the app to see the continue button if they just saved, or we can just assume they will restart.
                 menu.show();
                 menu.raise();
                 menu.activateWindow();

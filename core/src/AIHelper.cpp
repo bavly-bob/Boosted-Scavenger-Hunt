@@ -14,7 +14,6 @@
 AIHelper::AIHelper(QObject* parent)
     : QObject(parent), m_net(new QNetworkAccessManager(this))
 {
-    // Read API info from environment; do not hardcode keys in source.
     const QByteArray key = qgetenv("AI_API_KEY");
     if (!key.isEmpty()) {
         m_apiKey = QString::fromUtf8(key);
@@ -23,8 +22,6 @@ AIHelper::AIHelper(QObject* parent)
     if (!url.isEmpty()) {
         m_apiUrl = QString::fromUtf8(url);
     } else {
-        // Default URL depends on provider; prefer OpenAI, but if the API key
-        // looks like an OpenRouter key (`sk-or-...`) use OpenRouter endpoint.
         if (m_apiKey.startsWith("sk-or-")) {
             m_apiUrl = QStringLiteral("https://openrouter.ai/v1/chat/completions");
         } else {
@@ -35,7 +32,6 @@ AIHelper::AIHelper(QObject* parent)
     if (!modelEnv.isEmpty()) {
         m_model = QString::fromUtf8(modelEnv);
     } else {
-        // If using OpenRouter by API key and no model specified, default to elephant-alpha
         if (m_apiKey.startsWith("sk-or-")) {
             m_model = QStringLiteral("elephant-alpha");
         } else {
@@ -52,7 +48,6 @@ bool AIHelper::isEnabled() const
 void AIHelper::rephrase(const QString& text, std::function<void(QString)> callback)
 {
     if (!isEnabled()) {
-        // Not enabled — call back immediately with original text.
         QTimer::singleShot(0, [text, callback]() { callback(text); });
         return;
     }
@@ -89,7 +84,6 @@ void AIHelper::rephrase(const QString& text, std::function<void(QString)> callba
             const QJsonDocument respDoc = QJsonDocument::fromJson(resp, &err);
             if (err.error == QJsonParseError::NoError && respDoc.isObject()) {
                 QJsonObject obj = respDoc.object();
-                // Try OpenAI-like structure: choices[0].message.content
                 QJsonArray choices = obj.value("choices").toArray();
                 if (!choices.isEmpty()) {
                     QJsonObject first = choices.at(0).toObject();

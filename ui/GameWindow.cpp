@@ -24,9 +24,9 @@
 namespace {
 QString formatTime(int seconds)
 {
-    const int m = seconds / 60;
-    const int s = seconds % 60;
-    return QString("%1:%2").arg(m, 2, 10, QChar('0')).arg(s, 2, 10, QChar('0'));
+    const int minutes = seconds / 60;
+    const int remainingSeconds = seconds % 60;
+    return QString("%1:%2").arg(minutes, 2, 10, QChar('0')).arg(remainingSeconds, 2, 10, QChar('0'));
 }
 
 QString findLevelsDir()
@@ -129,19 +129,16 @@ quint32 tileHash(int x, int y, quint32 salt = 0u)
     return h;
 }
 
-// Returns a colour to tint each tile based on its CellType.
 QColor tileColour(CellType ct, int x, int y)
 {
     switch (ct) {
     case CellType::Chamber:
-        // Warm stone-floor checkerboard
         return ((x + y) % 2 == 0) ? QColor(58, 50, 42, 220) : QColor(52, 44, 36, 220);
     case CellType::Corridor:
-        // Darker, narrow-path look
         return ((x + y) % 2 == 0) ? QColor(38, 34, 30, 240) : QColor(32, 28, 24, 240);
     case CellType::Wall:
     case CellType::HiddenWall:
-        return QColor(0, 0, 0, 0); // walls are drawn via Wall::draw(); skip fill here
+        return QColor(0, 0, 0, 0);
     case CellType::TreasureRoom:
         return QColor(160, 130, 40, 180);
     case CellType::Coin:
@@ -153,12 +150,10 @@ QColor tileColour(CellType ct, int x, int y)
     }
 }
 
-// Draw tile border / grout line
 void drawTileBorder(QPainter& p, const QRect& cell, CellType ct)
 {
     switch (ct) {
     case CellType::Chamber:
-        // Subtle grout lines to create stone-floor tile grid feel
         p.setPen(QPen(QColor(30, 22, 16, 70), 1));
         p.drawLine(cell.topLeft(), cell.topRight());
         p.drawLine(cell.topLeft(), cell.bottomLeft());
@@ -174,9 +169,6 @@ void drawTileBorder(QPainter& p, const QRect& cell, CellType ct)
 }
 } // namespace
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constructor
-// ─────────────────────────────────────────────────────────────────────────────
 GameWindow::GameWindow(QWidget *parent)
     : QWidget(parent),
       m_game(new Game(this)),
@@ -205,7 +197,6 @@ GameWindow::GameWindow(QWidget *parent)
     m_renderTimer->setInterval(16);
     connect(m_renderTimer, &QTimer::timeout, this, [this]() {
         m_deltaMs = static_cast<float>(m_frameTimer.restart());
-        // Update smooth player movement each render tick
         if (m_game->state() == GameState::PLAYING) {
             const Player* p = m_game->player();
             if (p) {
@@ -269,13 +260,6 @@ GameWindow::GameWindow(QWidget *parent)
 
     setFixedSize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Asset loading
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Helper: load individual frame PNGs from  assetsDir/player/<dir>/frame_0.png …
-// Returns true if at least one frame was loaded and a clip was registered.
 static QRect alphaBounds(const QImage& img)
 {
     int minX = img.width();
@@ -336,13 +320,12 @@ static bool loadPlayerDirectionFrames(SpriteManager& sm,
 {
     const QString folder = assetsDir + "/player/" + dirName;
     QVector<QPixmap> frames;
-    for (int i = 0; i < 8; ++i) {                 // try up to 8 frames
+    for (int i = 0; i < 8; ++i) {
         const QString path = folder + QString("/frame_%1.png").arg(i);
         if (!QFile::exists(path)) break;
         QImage img(path);
         if (img.isNull()) break;
         if (!img.hasAlphaChannel()) {
-            // Safety fallback for non-alpha PNGs.
             QColor bgColor = img.pixelColor(0, 0);
             QPixmap tmp = QPixmap::fromImage(img);
             tmp.setMask(tmp.createMaskFromColor(bgColor, Qt::MaskOutColor));
@@ -356,18 +339,11 @@ static bool loadPlayerDirectionFrames(SpriteManager& sm,
     }
 
     if (frames.isEmpty()) return false;
-
-    // Store each frame under a unique cache key and build a virtual clip.
-    // We use individual pixmaps per frame so there is no sheet slicing needed.
-    // The AnimationClip still points to the first frame's key; Player::draw()
-    // is aware of the per-frame key pattern when individual files are used.
     for (int i = 0; i < frames.size(); ++i) {
         sm.loadPixmap(QString("%1_frame_%2").arg(clipKey).arg(i), frames[i]);
     }
-
-    // Register a clip that covers all loaded frames (srcY=0, full tile size).
     AnimationClip c;
-    c.spriteKey   = QString("%1_frame_0").arg(clipKey); // first-frame key
+    c.spriteKey   = QString("%1_frame_0").arg(clipKey);
     c.frameCount  = frames.size();
     c.frameWidth  = tileSize;
     c.frameHeight = tileSize;
@@ -384,8 +360,6 @@ void GameWindow::loadAssets()
 
     const QString assetsDir = findAssetsDir();
     if (assetsDir.isEmpty()) return;
-
-    // ── Wall sprite sheet (128×32 → 4 variants of 32×32) ──────────────────
     m_floorTiles.clear();
     m_wallTiles.clear();
     m_treasurePedestalTile = QPixmap();
@@ -472,13 +446,6 @@ void GameWindow::loadAssets()
             m_spriteManager.loadPixmap(QString("wall_%1").arg(v), tile);
         }
     }
-
-    // ── Player sprites ─────────────────────────────────────────────────────
-    // Preferred: individual PNG files under  assets/player/<dir>/frame_N.png
-    // Fallback:  sprite sheet at            assets/player_sprites.png
-    //
-    // Supported direction folders:  down, up, left, right, idle
-    //
     const struct { const char* folder; const char* clip; } playerDirs[] = {
         { "down",  "player_move_down"  },
         { "up",    "player_move_up"    },
@@ -494,14 +461,11 @@ void GameWindow::loadAssets()
             anyPlayerFrameLoaded = true;
         }
     }
-
-    // Fall back to the old single sprite sheet if no individual files exist.
     if (!anyPlayerFrameLoaded) {
         const QString playerSheet = assetsDir + "/player_sprites.png";
         if (QFile::exists(playerSheet)) {
             QImage playerImg(playerSheet);
             if (!playerImg.isNull()) {
-                // Use alpha if available; otherwise use top-left colour key.
                 QPixmap fullPix;
                 if (playerImg.hasAlphaChannel()) {
                     fullPix = QPixmap::fromImage(playerImg);
@@ -517,7 +481,6 @@ void GameWindow::loadAssets()
 
             const QPixmap& px = m_spriteManager.sprite("player_sheet");
             if (!px.isNull()) {
-                // Sheet layout: 5 rows × 4 columns (down/up/left/right/idle)
                 const int ROWS = 5, COLS = 4;
                 const int fw = px.width()  / COLS;
                 const int fh = px.height() / ROWS;
@@ -540,12 +503,8 @@ void GameWindow::loadAssets()
                     m_spriteManager.registerClip(QString(e.name), c);
                 }
             }
-            // If the sheet is also null/corrupt, no clips get registered and
-            // Player::draw() will use the procedural circle fallback — always visible.
         }
     }
-
-    // ── Enemy sprite sheet ─────────────────────────────────────────────────
     const QString enemySheet = assetsDir + "/enemy_sprites.png";
     if (QFile::exists(enemySheet)) {
         QImage enemyImg(enemySheet);
@@ -589,11 +548,7 @@ void GameWindow::loadAssets()
             }
         }
     }
-} // end loadAssets()
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sprite injection
-// ─────────────────────────────────────────────────────────────────────────────
+}
 
 void GameWindow::injectSprites()
 {
@@ -601,7 +556,6 @@ void GameWindow::injectSprites()
     const Player* player = m_game->player();
 
     if (player) {
-        // const_cast: we own the player through Game and need to configure it.
         const_cast<Player*>(player)->setSpriteManager(&m_spriteManager);
     }
 
@@ -616,10 +570,6 @@ void GameWindow::injectSprites()
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Public API
-// ─────────────────────────────────────────────────────────────────────────────
 void GameWindow::startNewGame(Difficulty difficulty)
 {
     loadAssets();
@@ -682,38 +632,27 @@ void GameWindow::snapCameraToPlayer()
                                qMax<qreal>(0.0, mapPixelH - viewPixelH));
     m_cameraPx = QPointF(camX, camY);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Painting
-// ─────────────────────────────────────────────────────────────────────────────
 void GameWindow::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
-
-    // ── Background gradient ────────────────────────────────────────────────
     QLinearGradient grad(0, 0, width(), height());
     int levelIdx = m_game->currentLevelIndex();
     if (levelIdx % 3 == 0) {
-        // Default dark blue/purple
         grad.setColorAt(0.0, QColor(18,  8, 48));
         grad.setColorAt(0.4, QColor(12, 40, 55));
         grad.setColorAt(1.0, QColor( 8, 16, 28));
     } else if (levelIdx % 3 == 1) {
-        // Dark green/teal for level 2
         grad.setColorAt(0.0, QColor(8,  48, 18));
         grad.setColorAt(0.4, QColor(12, 55, 40));
         grad.setColorAt(1.0, QColor(8, 28, 16));
     } else {
-        // Dark red/crimson for level 3
         grad.setColorAt(0.0, QColor(48,  8, 18));
         grad.setColorAt(0.4, QColor(55, 12, 40));
         grad.setColorAt(1.0, QColor(28,  8, 16));
     }
     p.fillRect(rect(), grad);
-
-    // ── HUD ────────────────────────────────────────────────────────────────
     {
         p.save();
         p.setClipRect(QRect(0, 0, width(), HUD_HEIGHT));
@@ -721,8 +660,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
         hudGrad.setColorAt(0.0, QColor(0, 0, 0, 180));
         hudGrad.setColorAt(1.0, QColor(0, 0, 0, 60));
         p.fillRect(QRect(0, 0, width(), HUD_HEIGHT), hudGrad);
-
-        // Separator line
         p.setPen(QPen(QColor(100, 80, 200, 120), 1));
         p.drawLine(0, HUD_HEIGHT - 1, width(), HUD_HEIGHT - 1);
 
@@ -730,8 +667,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
         const QString scoreText = QString("Score: %1").arg(m_game->score());
         const int coins = m_game->coinsCollected();
         const QString timeText = formatTime(m_game->timeRemaining());
-
-        // Level name
         QFont titleFont = p.font();
         titleFont.setBold(true);
         titleFont.setPointSize(11);
@@ -745,12 +680,8 @@ void GameWindow::paintEvent(QPaintEvent *event)
         infoFont.setBold(false);
         infoFont.setPointSize(9);
         p.setFont(infoFont);
-
-        // Score
         p.setPen(QColor(180, 220, 180));
         p.drawText(QRect(12, 32, 160, 18), Qt::AlignLeft | Qt::AlignVCenter, scoreText);
-
-        // Coins — draw coloured coin icons
         const int coinX = width() / 2 - 60;
         p.setPen(QColor(200, 200, 200));
         p.drawText(QRect(coinX, 32, 120, 18), Qt::AlignLeft | Qt::AlignVCenter, "Coins: ");
@@ -760,8 +691,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
             p.setPen(QPen(coinColor.darker(150), 1));
             p.drawEllipse(coinX + 58 + i * 20, 36, 12, 12);
         }
-
-        // Timer
         const int timeRemaining = m_game->timeRemaining();
         const QColor timeColor = (timeRemaining > 30) ? QColor(200, 220, 200)
                                  : (timeRemaining > 10) ? QColor(240, 200, 80)
@@ -769,18 +698,12 @@ void GameWindow::paintEvent(QPaintEvent *event)
         p.setPen(timeColor);
         p.drawText(QRect(width() - 120, 32, 108, 18),
                    Qt::AlignRight | Qt::AlignVCenter,
-                   QString("⏱ %1").arg(timeText));
-
-        // Draw HUD buttons (Restart and Quit)
+                   QString("Time: %1").arg(timeText));
         p.setPen(QPen(QColor(200, 200, 200), 1));
-        
-        // Restart Button
         QRect restartBtn(width() - 210, 6, 80, 24);
         p.setBrush(QColor(60, 60, 80));
         p.drawRoundedRect(restartBtn, 4, 4);
         p.drawText(restartBtn, Qt::AlignCenter, "Restart");
-
-        // Quit Button
         QRect quitBtn(width() - 120, 6, 80, 24);
         p.setBrush(QColor(80, 40, 40));
         p.drawRoundedRect(quitBtn, 4, 4);
@@ -791,8 +714,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
     const Level*  level  = m_game->level();
     const Player* player = m_game->player();
     if (!level || !player) return;
-
-    // ── Camera ────────────────────────────────────────────────────────────
     p.save();
     p.translate(0, HUD_HEIGHT);
 
@@ -836,8 +757,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
         p.drawPixmap(targetRect, sheet, QRect(sx, sy, srcTileSize, srcTileSize));
         return true;
     };
-
-    // ── Base tile pass ────────────────────────────────────────────────────
     for (int y = startY; y <= endY; ++y) {
         for (int x = startX; x <= endX; ++x) {
             const int screenX = x * TILE_SIZE - camX;
@@ -851,15 +770,15 @@ void GameWindow::paintEvent(QPaintEvent *event)
                     const quint32 roll = tileHash(x, y, 17u) % 100u;
                     int wallIdx = 0;
                     if (roll < 65u) {
-                        wallIdx = 0;  // stone block
+                        wallIdx = 0;
                     } else if (roll < 87u) {
-                        wallIdx = qMin(1, m_wallTiles.size() - 1); // cracked
+                        wallIdx = qMin(1, m_wallTiles.size() - 1);
                     } else if (roll < 93u) {
-                        wallIdx = qMin(2, m_wallTiles.size() - 1); // corner inner
+                        wallIdx = qMin(2, m_wallTiles.size() - 1);
                     } else if (roll < 97u) {
-                        wallIdx = qMin(3, m_wallTiles.size() - 1); // corner outer
+                        wallIdx = qMin(3, m_wallTiles.size() - 1);
                     } else {
-                        wallIdx = qMin(4, m_wallTiles.size() - 1); // pillar
+                        wallIdx = qMin(4, m_wallTiles.size() - 1);
                     }
                     p.drawPixmap(cell, m_wallTiles.at(wallIdx));
                     drewWall = true;
@@ -884,13 +803,13 @@ void GameWindow::paintEvent(QPaintEvent *event)
                     floorIdx = 0;
                 } else {
                     if (roll < 60u) {
-                        floorIdx = 0; // base
+                        floorIdx = 0;
                     } else if (roll < 78u) {
-                        floorIdx = qMin(1, m_floorTiles.size() - 1); // cracked
+                        floorIdx = qMin(1, m_floorTiles.size() - 1);
                     } else if (roll < 92u) {
-                        floorIdx = qMin(2, m_floorTiles.size() - 1); // moss
+                        floorIdx = qMin(2, m_floorTiles.size() - 1);
                     } else {
-                        floorIdx = qMin(3, m_floorTiles.size() - 1); // rubble
+                        floorIdx = qMin(3, m_floorTiles.size() - 1);
                     }
                 }
                 p.drawPixmap(cell, m_floorTiles.at(floorIdx));
@@ -917,9 +836,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
             }
         }
     }
-
-
-    // ── Object pass (walls, coins, triggers, player) ──────────────────────
     p.save();
     p.translate(-camX, -camY);
     for (GameObject* obj : level->getObjects()) {
@@ -929,7 +845,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
             obj->draw(p, TILE_SIZE);
         }
     }
-    // Draw enemies
     for (Enemy* enemy : level->getEnemies()) {
         if (!enemy) continue;
         const int ox = enemy->getX(), oy = enemy->getY();
@@ -937,11 +852,8 @@ void GameWindow::paintEvent(QPaintEvent *event)
             enemy->draw(p, TILE_SIZE);
         }
     }
-    // Draw player at smooth sub-tile pixel position
     player->draw(p, TILE_SIZE);
     p.restore();
-
-    // ── Fog of war ────────────────────────────────────────────────────────
     const int px = player->getX(), py = player->getY();
     const int r  = VISIBILITY_RADIUS_TILES;
 
@@ -979,8 +891,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
             p.fillRect(QRect(screenX, screenY, TILE_SIZE, TILE_SIZE), overlay);
         }
     }
-
-    // ── Player glow highlight (visible area indicator) ────────────────────
     {
         const int gScreenX = px * TILE_SIZE - camX + TILE_SIZE / 2;
         const int gScreenY = py * TILE_SIZE - camY + TILE_SIZE / 2;
@@ -1014,7 +924,7 @@ void GameWindow::paintEvent(QPaintEvent *event)
                      QRect(0, 0, m_vignetteOverlay.width(), m_vignetteOverlay.height()));
     }
 
-    p.restore(); // end of HUD translate
+    p.restore();
 
     // Draw hints/status as a final overlay so they always stay above gameplay.
     if (!m_statusText.isEmpty()) {
@@ -1064,10 +974,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
         p.restore();
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Input
-// ─────────────────────────────────────────────────────────────────────────────
 void GameWindow::keyPressEvent(QKeyEvent *event)
 {
     if (!event) return;
@@ -1109,7 +1015,6 @@ void GameWindow::mousePressEvent(QMouseEvent *event)
     if (!event) return;
 
     if (m_game->state() == GameState::PLAYING) {
-        // Check button rects
         QRect restartBtn(width() - 210, 6, 80, 24);
         QRect quitBtn(width() - 120, 6, 80, 24);
 
@@ -1134,10 +1039,6 @@ void GameWindow::mousePressEvent(QMouseEvent *event)
 
     QWidget::mousePressEvent(event);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Slots
-// ─────────────────────────────────────────────────────────────────────────────
 void GameWindow::onClueRevealed(const QString& text)
 {
     m_statusText = text;
@@ -1168,10 +1069,6 @@ void GameWindow::onGameOver(bool won, int score)
     m_gameOverOverlay->show();
     m_gameOverOverlay->raise();
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Private helpers
-// ─────────────────────────────────────────────────────────────────────────────
 void GameWindow::ensureLevelsConfigured()
 {
     if (m_levelsConfigured) return;

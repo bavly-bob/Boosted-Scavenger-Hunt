@@ -18,12 +18,8 @@
 #include <algorithm>
 #include <functional>
 
-// ═════════════════════════════════════════════════════════════════════════════
-// Internal helpers (anonymous namespace)
-// ═════════════════════════════════════════════════════════════════════════════
 namespace {
 
-// ── Grid validation (legacy path) ──────────────────────────────────────────
 bool isValidGrid(const QJsonArray& rows, int expectedWidth, int expectedHeight)
 {
     if (rows.size() != expectedHeight) return false;
@@ -33,7 +29,6 @@ bool isValidGrid(const QJsonArray& rows, int expectedWidth, int expectedHeight)
     return true;
 }
 
-// ── Corridor carvers ───────────────────────────────────────────────────────
 void carveCell(Level* level, int x, int y)
 {
     if (!level->isInBounds(x, y)) return;
@@ -53,10 +48,9 @@ void carveV(Level* level, int x, int y1, int y2)
     for (int y = y1; y <= y2; ++y) carveCell(level, x, y);
 }
 
-// L-shaped corridor connecting two tile-centre points
+// Carves an L-shaped corridor between chamber centers.
 void carveCorridor(Level* level, QPoint a, QPoint b, QRandomGenerator& rng)
 {
-    // Randomly choose horizontal-first or vertical-first
     if (rng.bounded(2) == 0) {
         carveH(level, a.y(), a.x(), b.x());
         carveV(level, b.x(), a.y(), b.y());
@@ -66,11 +60,8 @@ void carveCorridor(Level* level, QPoint a, QPoint b, QRandomGenerator& rng)
     }
 }
 
-// ── Chamber carver ─────────────────────────────────────────────────────────
-// Only carves the interior floor.  Wall tiles surrounding the chamber stay
-// as CellType::Wall + collision=true (set when the map was initialised).
-// We do NOT create Wall objects here; the collision grid is the sole blocker
-// for chamber-format levels, so corridors can cross borders freely.
+// Carves only chamber interiors. Borders remain blocking wall tiles in the
+// collision grid, which is the authoritative blocker in chamber-format levels.
 void carveChamber(Level* level, const Chamber& ch)
 {
     for (int y = ch.y; y < ch.y + ch.height; ++y) {
@@ -84,7 +75,6 @@ void carveChamber(Level* level, const Chamber& ch)
 }
 
 
-// ── BSP room generator ─────────────────────────────────────────────────────
 struct BSPNode {
     int x, y, w, h;
     int childL = -1, childR = -1;
@@ -102,10 +92,10 @@ QVector<BSPNode> buildBSP(int x, int y, int w, int h,
 
     const int MIN_SIZE = 10;
     if (depth == 0 || w < MIN_SIZE * 2 || h < MIN_SIZE * 2) {
-        return nodes; // leaf
+        return nodes;
     }
 
-    // Decide split direction: horizontal if tall, vertical if wide, else random
+    // Bias split direction to reduce long, thin partitions.
     bool splitH = (h > w) ? true : (w > h ? false : rng.bounded(2) == 0);
 
     if (splitH) {
@@ -128,7 +118,7 @@ QVector<Chamber> extractChambers(const QVector<BSPNode>& nodes, QRandomGenerator
 {
     QVector<Chamber> chambers;
     int id = 0;
-    const int MARGIN = 1; // tiles between room edge and node edge
+    const int MARGIN = 1;
     const int MIN_ROOM = 5;
 
     for (const BSPNode& node : nodes) {
@@ -154,7 +144,7 @@ QVector<Chamber> extractChambers(const QVector<BSPNode>& nodes, QRandomGenerator
     return chambers;
 }
 
-// ── Minimum spanning tree on chamber centres (Prim's algorithm) ────────────
+// Connect chambers with an MST, then add extra edges for loops.
 QVector<QPair<int,int>> connectChambers(const QVector<Chamber>& chambers, QRandomGenerator& rng)
 {
     QVector<QPair<int,int>> edges;
@@ -191,7 +181,6 @@ QVector<QPair<int,int>> connectChambers(const QVector<Chamber>& chambers, QRando
         ++connected;
     }
 
-    // Add ~30 % extra edges for loops
     const int extras = qMax(0, static_cast<int>(chambers.size() * 0.3));
     for (int i = 0; i < extras; ++i) {
         const int a = rng.bounded(chambers.size());
@@ -203,9 +192,7 @@ QVector<QPair<int,int>> connectChambers(const QVector<Chamber>& chambers, QRando
     return edges;
 }
 
-// ── Coin distributor ───────────────────────────────────────────────────────
-// Ensures exactly `coinCount` coins are placed across chambers,
-// no two in the same chamber, skipping the spawn chamber.
+// Places up to one coin per chamber and always skips the spawn chamber.
 void distributeCoins(QVector<Chamber>& chambers, int spawnIdx,
                      int coinCount, QRandomGenerator& rng)
 {
@@ -213,7 +200,6 @@ void distributeCoins(QVector<Chamber>& chambers, int spawnIdx,
     for (int i = 0; i < chambers.size(); ++i) {
         if (i != spawnIdx) eligible.push_back(i);
     }
-    // Fisher-Yates shuffle
     for (int i = eligible.size() - 1; i > 0; --i) {
         int j = rng.bounded(i + 1);
         std::swap(eligible[i], eligible[j]);
@@ -222,14 +208,12 @@ void distributeCoins(QVector<Chamber>& chambers, int spawnIdx,
     const int actual = qMin(coinCount, eligible.size());
     for (int k = 0; k < actual; ++k) {
         Chamber& ch = chambers[eligible[k]];
-        // Pick a random interior tile
         const int cx = ch.x + 1 + rng.bounded(qMax(1, ch.width  - 2));
         const int cy = ch.y + 1 + rng.bounded(qMax(1, ch.height - 2));
         ch.coinPositions.push_back(QPoint(cx, cy));
     }
 }
 
-// ── Clue builder (generates a standard JSON clue array) ───────────────────
 QJsonArray buildDefaultClues()
 {
     QJsonArray clues;
@@ -249,7 +233,6 @@ QJsonArray buildDefaultClues()
     return clues;
 }
 
-// ── Chamber JSON parser ────────────────────────────────────────────────────
 Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
 {
     Level* level = new Level();
@@ -285,14 +268,12 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         chambers.push_back(ch);
     }
 
-    // Determine spawn chamber
     const int spawnChamberIdx = root.value("spawnChamber").toInt(0);
     const QPoint spawnPos = chambers.isEmpty()
         ? QPoint(1, 1)
         : chambers[qBound(0, spawnChamberIdx, chambers.size()-1)].centre();
     level->setSpawn(spawnPos.x(), spawnPos.y());
 
-    // Fill the level grid with walls first (tile + collision), then carve
     for (int y = 0; y < level->getHeight(); ++y)
         for (int x = 0; x < level->getWidth(); ++x) {
             level->setTileAt(x, y, static_cast<int>(CellType::Wall));
@@ -304,7 +285,6 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         level->addChamber(ch);
     }
 
-    // Carve corridors
     const QJsonArray corridors = root.value("corridors").toArray();
     for (const QJsonValue& cv : corridors) {
         const QJsonObject co = cv.toObject();
@@ -316,7 +296,6 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         }
     }
 
-    // Place objects
     for (int i = 0; i < chambers.size(); ++i) {
         const Chamber& ch = chambers[i];
         for (const QPoint& cp : ch.coinPositions) {
@@ -332,7 +311,6 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         }
     }
 
-    // Hidden walls (chamber format)
     const QJsonArray hiddenWalls = root.value("hiddenWalls").toArray();
     for (const QJsonValue& value : hiddenWalls) {
         const QJsonArray xy = value.toArray();
@@ -346,13 +324,13 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         }
     }
 
-    // Trigger walls (chamber format) — walls that open when pressed from outside
+    // Trigger walls open target walls defined in "opensWalls".
     const QJsonArray triggerWalls = root.value("triggerWalls").toArray();
     for (const QJsonValue& value : triggerWalls) {
         const QJsonObject tw = value.toObject();
         const int x = tw.value("x").toInt();
         const int y = tw.value("y").toInt();
-        
+
         QVector<QPoint> opens;
         const QJsonArray opensWalls = tw.value("opensWalls").toArray();
         for (const QJsonValue& openValue : opensWalls) {
@@ -361,7 +339,7 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
                 opens.push_back(QPoint(xy.at(0).toInt(), xy.at(1).toInt()));
             }
         }
-        
+
         if (level->isInBounds(x, y) && !opens.isEmpty()) {
             level->setTileAt(x, y, static_cast<int>(CellType::Wall));
             level->setCollisionAt(x, y, true);
@@ -369,7 +347,6 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         }
     }
 
-    // Clues
     const QJsonArray clues = root.value("clues").toArray().isEmpty()
         ? buildDefaultClues()
         : root.value("clues").toArray();
@@ -387,10 +364,6 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
 }
 
 } // namespace
-
-// ═════════════════════════════════════════════════════════════════════════════
-// Public API
-// ═════════════════════════════════════════════════════════════════════════════
 
 bool LevelLoader::isChamberFormat(const QString& filePath)
 {
@@ -413,12 +386,10 @@ Level* LevelLoader::loadFromJson(const QString& filePath, QJsonArray* outClues)
 
     const QJsonObject root = doc.object();
 
-    // ── Chamber format ───────────────────────────────────────────────────────
     if (root.value("format").toString() == "chambers") {
         return buildFromChamberJson(root, outClues);
     }
 
-    // ── Legacy flat-grid format ──────────────────────────────────────────────
     Level* level = new Level();
     level->setName(root.value("name").toString("Unnamed Level"));
     level->setSize(root.value("width").toInt(0), root.value("height").toInt(0));
@@ -502,7 +473,6 @@ Level* LevelLoader::loadFromJson(const QString& filePath, QJsonArray* outClues)
 
 Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* outClues)
 {
-    // Map difficulty (0=easy,1=normal,2=hard) to map size + coin count
     const int mapW    = (difficulty == 0) ? 36 : (difficulty == 2) ? 60 : 48;
     const int mapH    = (difficulty == 0) ? 24 : (difficulty == 2) ? 40 : 32;
     const int bspDepth= (difficulty == 0) ?  3 : (difficulty == 2) ?  5 :  4;
@@ -516,46 +486,39 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
     level->setSize(mapW, mapH);
     level->setTimeLimit(timeLim);
 
-    // Fill entire map as solid wall collision
     for (int y = 0; y < mapH; ++y)
         for (int x = 0; x < mapW; ++x) {
             level->setTileAt(x, y, static_cast<int>(CellType::Wall));
             level->setCollisionAt(x, y, true);
         }
 
-    // BSP partition
     QVector<BSPNode> nodes;
     buildBSP(1, 1, mapW - 2, mapH - 2, bspDepth, rng, nodes);
     QVector<Chamber> chambers = extractChambers(nodes, rng);
 
     if (chambers.isEmpty()) {
-        // Fallback: single room
         Chamber ch;
         ch.id = 0; ch.x = 2; ch.y = 2; ch.width = mapW-4; ch.height = mapH-4;
         chambers.push_back(ch);
     }
 
-    // Spawn in chamber 0
     const QPoint spawn = chambers[0].centre();
     level->setSpawn(spawn.x(), spawn.y());
 
-    // Carve chambers (collision grid only – no Wall objects needed in BSP mode)
+    // BSP mode relies on the collision grid rather than explicit Wall objects.
     for (Chamber& ch : chambers) {
         carveChamber(level, ch);
         level->addChamber(ch);
     }
 
-    // Connect chambers via MST + extras
     const QVector<QPair<int,int>> edges = connectChambers(chambers, rng);
     for (const auto& edge : edges) {
         carveCorridor(level, chambers[edge.first].centre(),
                       chambers[edge.second].centre(), rng);
     }
 
-    // Distribute coins (skip spawn chamber)
     distributeCoins(chambers, 0, coins, rng);
 
-    // Find farthest chamber from spawn for treasure room
     int farthest = 0;
     double maxDist = 0.0;
     for (int i = 1; i < chambers.size(); ++i) {
@@ -567,15 +530,14 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
     chambers[farthest].hasTreasureRoom = true;
     chambers[farthest].treasurePos = chambers[farthest].centre();
 
-    // Place game objects
     for (int i = 0; i < chambers.size(); ++i) {
         Chamber& ch = chambers[i];
         for (const QPoint& cp : ch.coinPositions)
             level->addCoin(new Coin(cp.x(), cp.y(), 100));
         if (ch.hasTreasureRoom)
             level->setTreasureRoom(new TreasureRoom(ch.treasurePos.x(), ch.treasurePos.y()));
-        
-        // Spawn enemies in some chambers depending on difficulty
+
+        // Increase enemy density with difficulty.
         if (i != 0 && rng.bounded(100) < (difficulty * 25 + 25)) {
             const int ex = ch.x + 1 + rng.bounded(qMax(1, ch.width  - 2));
             const int ey = ch.y + 1 + rng.bounded(qMax(1, ch.height - 2));
@@ -583,7 +545,6 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
         }
     }
 
-    // Clues
     const QJsonArray clues = buildDefaultClues();
     if (outClues) *outClues = clues;
 

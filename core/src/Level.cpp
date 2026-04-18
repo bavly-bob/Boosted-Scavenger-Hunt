@@ -16,7 +16,6 @@
 
 quint64 Level::posKey(int x, int y)
 {
-    // Pack (x,y) into a stable 64-bit key (works with negative too).
     const quint32 ux = static_cast<quint32>(x);
     const quint32 uy = static_cast<quint32>(y);
     return (static_cast<quint64>(ux) << 32) | static_cast<quint64>(uy);
@@ -217,7 +216,6 @@ bool Level::isWalkable(int x, int y) const
         return false;
     }
 
-    // Prefer the grid once it exists; this is the target architecture.
     if (!m_collision.isEmpty()) {
         if (isCollidingAt(x, y)) {
             return false;
@@ -320,8 +318,7 @@ ClueTrigger* Level::clueTriggerAt(int x, int y) const
 
 Enemy* Level::enemyAt(int x, int y) const
 {
-    // Note: Enemies move, so a static hash map isn't reliable for moving objects.
-    // We should search the list instead for real-time positions.
+    // Enemies move every tick, so the static lookup table can become stale.
     for (Enemy* e : m_enemies) {
         if (e->getX() == x && e->getY() == y) return e;
     }
@@ -414,8 +411,6 @@ void Level::addOwnedObject(GameObject* object)
     }
     m_objects.push_back(object);
 }
-
-// ── Chamber accessors ─────────────────────────────────────────────────────────
 
 void Level::addChamber(const Chamber& ch)
 {

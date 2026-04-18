@@ -14,12 +14,10 @@ MainMenu::MainMenu(QWidget *parent)
     resize(550, 620);
     setMinimumSize(450, 500);
 
-    // --- Layout ---
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(40, 60, 40, 35);
     layout->setSpacing(0);
 
-    // Helper: create a centered, styled label
     auto addLabel = [&](const QString &text, const QString &style) -> QLabel* {
         QLabel *lbl = new QLabel(text, this);
         lbl->setAlignment(Qt::AlignCenter);
@@ -28,12 +26,10 @@ MainMenu::MainMenu(QWidget *parent)
         return lbl;
     };
 
-    // --- Subtitle ---
     addLabel("EMBARK ON YOUR ADVENTURE",
              "color: rgba(200,180,120,0.7); font-size: 11px; font-weight: 600;"
              "letter-spacing: 4px; padding-bottom: 8px;");
 
-    // --- Title with glow ---
     QLabel *title = addLabel("Scavenger\nHunt",
                              "color: #E8D5A3; font-size: 52px; font-weight: 800;"
                              "letter-spacing: 2px; margin: 0px;");
@@ -43,7 +39,6 @@ MainMenu::MainMenu(QWidget *parent)
     shadow->setOffset(0, 4);
     title->setGraphicsEffect(shadow);
 
-    // --- Divider + description ---
     addLabel("--- + ---",
              "color: rgba(200,170,80,0.4); font-size: 16px;"
              "padding: 10px 0 5px 0; letter-spacing: 3px;");
@@ -53,7 +48,6 @@ MainMenu::MainMenu(QWidget *parent)
 
     layout->addSpacerItem(new QSpacerItem(0, 20, QSizePolicy::Minimum, QSizePolicy::Expanding));
 
-    // --- Difficulty buttons ---
     addLabel("SELECT DIFFICULTY",
              "color: rgba(180,170,140,0.5); font-size: 10px; font-weight: 700;"
              "letter-spacing: 5px; padding-bottom: 12px;");
@@ -77,7 +71,6 @@ MainMenu::MainMenu(QWidget *parent)
     btnLayout->addWidget(quit,   0, Qt::AlignCenter);
     layout->addLayout(btnLayout);
 
-    // Wire buttons to signal
     connect(easy,   &QPushButton::clicked, this, [this]{ emit difficultySelected(0); });
     connect(medium, &QPushButton::clicked, this, [this]{ emit difficultySelected(1); });
     connect(hard,   &QPushButton::clicked, this, [this]{ emit difficultySelected(2); });
@@ -85,19 +78,16 @@ MainMenu::MainMenu(QWidget *parent)
 
     layout->addSpacerItem(new QSpacerItem(0, 25, QSizePolicy::Minimum, QSizePolicy::Expanding));
 
-    // --- Footer ---
     addLabel("Find the clues. Solve the puzzles. Claim the treasure.",
              "color: rgba(180,170,140,0.35); font-size: 11px; font-style: italic;"
              "padding-top: 8px;");
 }
 
-// --- Gradient background (no animations) ---
 void MainMenu::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter p(this);
 
-    // Deep, dark gradient background
     QLinearGradient grad(0, 0, 0, height());
     grad.setColorAt(0.0, QColor(15, 20, 30));
     grad.setColorAt(1.0, QColor(5, 5, 10));
@@ -113,7 +103,6 @@ void MainMenu::showEvent(QShowEvent *event)
     }
 }
 
-// --- Styled button with accent color ---
 QPushButton* MainMenu::createButton(const QString &text, const QColor &c)
 {
     QPushButton *btn = new QPushButton(text, this);
