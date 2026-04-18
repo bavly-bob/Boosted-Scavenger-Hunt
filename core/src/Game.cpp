@@ -7,10 +7,12 @@
 #include "Player.h"
 
 #include "AIHelper.h"
-
 #include "InteractionResult.h"
 
 #include <QTimer>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace {
 int difficultyTimeOffsetSeconds(Difficulty difficulty)
@@ -107,6 +109,51 @@ void Game::nextLevel()
 void Game::restartLevel()
 {
     startLevel(m_currentLevelIndex, m_difficulty);
+}
+
+void Game::saveGame(const QString& filepath)
+{
+    QJsonObject root;
+    root["levelIndex"] = m_currentLevelIndex;
+    root["difficulty"] = static_cast<int>(m_difficulty);
+    root["score"] = m_score;
+    
+    QJsonDocument doc(root);
+    QFile file(filepath);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(doc.toJson());
+        file.close();
+    }
+}
+
+bool Game::loadGame(const QString& filepath)
+{
+    QFile file(filepath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    
+    if (!doc.isObject()) return false;
+    QJsonObject root = doc.object();
+    
+    int levelIndex = root["levelIndex"].toInt(0);
+    int diffInt = root["difficulty"].toInt(1);
+    m_score = root["score"].toInt(0);
+    
+    Difficulty diff = Difficulty::NORMAL;
+    if (diffInt == 0) diff = Difficulty::EASY;
+    else if (diffInt == 2) diff = Difficulty::HARD;
+    
+    startLevel(levelIndex, diff);
+    return true;
+}
+
+bool Game::hasSavedGame(const QString& filepath) const
+{
+    return QFile::exists(filepath);
 }
 
 void Game::handleInput(Direction dir)

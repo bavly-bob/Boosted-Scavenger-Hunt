@@ -13,6 +13,7 @@ class ClueManager;
 class Level;
 class Player;
 class QTimer;
+class AIHelper;
 
 class Game : public QObject {
     Q_OBJECT
@@ -28,6 +29,7 @@ class Game : public QObject {
     std::unique_ptr<Level> m_currentLevel;
     std::unique_ptr<Player> m_player;
     std::unique_ptr<ClueManager> m_clueManager;
+    std::unique_ptr<AIHelper> m_aiHelper;
     QTimer* m_timer;
 
 public:
@@ -41,6 +43,11 @@ public:
     void startLevel(int levelIndex, Difficulty diff);
     void nextLevel();
     void restartLevel();
+    
+    // Save/Load
+    void saveGame(const QString& filepath);
+    bool loadGame(const QString& filepath);
+    bool hasSavedGame(const QString& filepath) const;
 
     void handleInput(Direction dir);
     void pause();

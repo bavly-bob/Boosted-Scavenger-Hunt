@@ -13,8 +13,8 @@ if(MSVC)
     add_compile_options(/Zc:__cplusplus /permissive-)
 endif()
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
 
 set(PROJECT_SOURCES
         main.cpp
@@ -40,6 +40,7 @@ set(PROJECT_SOURCES
         systems/include/ClueManager.h systems/src/ClueManager.cpp
         systems/include/InputHandler.h systems/src/InputHandler.cpp
         systems/include/SpriteManager.h systems/src/SpriteManager.cpp
+        core/include/AIHelper.h core/src/AIHelper.cpp
         utils/Enums.h
         core/include/Chamber.h
 )
@@ -61,7 +62,7 @@ else()
     endif()
 endif()
 
-target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network)
 target_include_directories(ScavengerHunt PRIVATE . core/include gameplay/include systems/include utils ui)
 
 add_custom_command(TARGET ScavengerHunt POST_BUILD
