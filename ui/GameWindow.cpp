@@ -324,9 +324,23 @@ void GameWindow::paintEvent(QPaintEvent *event)
 
     // ── Background gradient ────────────────────────────────────────────────
     QLinearGradient grad(0, 0, width(), height());
-    grad.setColorAt(0.0, QColor(18,  8, 48));
-    grad.setColorAt(0.4, QColor(12, 40, 55));
-    grad.setColorAt(1.0, QColor( 8, 16, 28));
+    int levelIdx = m_game->currentLevelIndex();
+    if (levelIdx % 3 == 0) {
+        // Default dark blue/purple
+        grad.setColorAt(0.0, QColor(18,  8, 48));
+        grad.setColorAt(0.4, QColor(12, 40, 55));
+        grad.setColorAt(1.0, QColor( 8, 16, 28));
+    } else if (levelIdx % 3 == 1) {
+        // Dark green/teal for level 2
+        grad.setColorAt(0.0, QColor(8,  48, 18));
+        grad.setColorAt(0.4, QColor(12, 55, 40));
+        grad.setColorAt(1.0, QColor(8, 28, 16));
+    } else {
+        // Dark red/crimson for level 3
+        grad.setColorAt(0.0, QColor(48,  8, 18));
+        grad.setColorAt(0.4, QColor(55, 12, 40));
+        grad.setColorAt(1.0, QColor(28,  8, 16));
+    }
     p.fillRect(rect(), grad);
 
     // ── HUD ────────────────────────────────────────────────────────────────
