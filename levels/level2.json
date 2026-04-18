@@ -39,11 +39,18 @@
     { "from": 9,  "to": 10 },
     { "from": 10, "to": 11 }
   ],
+  "hiddenWalls": [
+    [43, 28],
+    [44, 28],
+    [43, 31],
+    [44, 31],
+    [47, 27]  
+  ],
   "triggerWalls": [
     {
-      "x": 45,
-      "y": 27,
-      "opensWalls": [[45, 28], [46, 27], [44, 27]]
+      "x": 42,
+      "y": 30,
+      "opensWalls": [[43, 28], [44, 28], [43, 31], [44, 31], [59, 28]]
     }
   ],
   "clues": [
@@ -55,7 +62,7 @@
     {
       "condition": "coins",
       "coinsRequired": 3,
-      "text": "The seal breaks! The treasure vault lies open in the deepest chamber."
+      "text": "The seal breaks! Find the hidden pressure plate to open the vault."
     }
   ]
 }

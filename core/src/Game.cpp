@@ -228,6 +228,8 @@ void Game::handleInput(Direction dir)
     }
     if (interaction.wallOpened) {
         emit wallOpened();
+    } else if (interaction.triggerActivated) {
+        emit clueRevealed("The pressure plate clicks, but no nearby wall moved.");
     }
     if (interaction.treasureUnlocked) {
         emit treasureUnlocked();
@@ -355,4 +357,3 @@ void Game::onTick()
 
     emit gameUpdated();
 }
-

@@ -369,15 +369,21 @@ InteractionResult Level::interactAt(int x, int y, Player& player, ClueManager& c
     if (TriggerWall* triggerWall = triggerWallAt(x, y)) {
         if (!triggerWall->isTriggered()) {
             triggerWall->trigger();
+            result.triggerActivated = true;
             bool anyOpened = false;
             for (const QPoint& pos : triggerWall->getOpensPositions()) {
+                bool opened = false;
                 if (HiddenWall* hidden = hiddenWallAt(pos.x(), pos.y())) {
                     if (hidden->isBlocking()) {
                         hidden->open();
                         setTileAndCollision(hidden->getX(), hidden->getY(), static_cast<int>(CellType::Empty), false);
-                        anyOpened = true;
+                        opened = true;
                     }
+                } else if (isInBounds(pos.x(), pos.y()) && isCollidingAt(pos.x(), pos.y())) {
+                    setTileAndCollision(pos.x(), pos.y(), static_cast<int>(CellType::Empty), false);
+                    opened = true;
                 }
+                anyOpened = anyOpened || opened;
             }
             result.wallOpened = anyOpened;
         }
@@ -425,4 +431,3 @@ int Level::chamberCount() const
 {
     return m_chambers.size();
 }
-

@@ -12,6 +12,7 @@ struct InteractionResult {
     int coinsCollectedTotal = 0;
     int scoreDelta = 0;
 
+    bool triggerActivated = false;
     bool wallOpened = false;
     bool treasureUnlocked = false;
     bool won = false;
