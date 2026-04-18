@@ -153,6 +153,8 @@ GameWindow::GameWindow(QWidget *parent)
     });
     connect(m_pauseOverlay, &PauseOverlay::restartRequested, this, [this]() {
         hidePauseOverlay();
+        m_statusText.clear();
+        m_statusIsAiHint = false;
         m_game->restartLevel();
         resetExplored();
         resizeToCurrentLevel();
@@ -169,6 +171,8 @@ GameWindow::GameWindow(QWidget *parent)
 
     connect(m_gameOverOverlay, &GameOverOverlay::nextLevelRequested, this, [this]() {
         m_gameOverOverlay->hide();
+        m_statusText.clear();
+        m_statusIsAiHint = false;
         m_game->nextLevel();
         resetExplored();
         resizeToCurrentLevel();
@@ -177,6 +181,8 @@ GameWindow::GameWindow(QWidget *parent)
     });
     connect(m_gameOverOverlay, &GameOverOverlay::restartRequested, this, [this]() {
         m_gameOverOverlay->hide();
+        m_statusText.clear();
+        m_statusIsAiHint = false;
         m_game->restartLevel();
         resetExplored();
         resizeToCurrentLevel();
@@ -517,6 +523,8 @@ void GameWindow::paintEvent(QPaintEvent *event)
 
     // ── HUD ────────────────────────────────────────────────────────────────
     {
+        p.save();
+        p.setClipRect(QRect(0, 0, width(), HUD_HEIGHT));
         QLinearGradient hudGrad(0, 0, 0, HUD_HEIGHT);
         hudGrad.setColorAt(0.0, QColor(0, 0, 0, 180));
         hudGrad.setColorAt(1.0, QColor(0, 0, 0, 60));
@@ -596,15 +604,17 @@ void GameWindow::paintEvent(QPaintEvent *event)
                 bodyFont.setBold(false);
                 p.setFont(bodyFont);
                 p.setPen(QColor(225, 235, 245));
-                p.drawText(QRect(108, 52, width() - 126, 16),
-                           Qt::AlignLeft | Qt::AlignVCenter, hintBody);
+                const QRect hintTextRect(108, 52, width() - 126, 16);
+                const QString elidedHint = p.fontMetrics().elidedText(hintBody, Qt::ElideRight, hintTextRect.width());
+                p.drawText(hintTextRect, Qt::AlignLeft | Qt::AlignVCenter, elidedHint);
             } else {
                 QFont statusFont = p.font();
                 statusFont.setItalic(true);
                 p.setFont(statusFont);
                 p.setPen(QColor(230, 200, 120));
-                p.drawText(QRect(12, 52, width() - 24, 16),
-                           Qt::AlignLeft | Qt::AlignVCenter, m_statusText);
+                const QRect statusRect(12, 52, width() - 24, 16);
+                const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
+                p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
             }
         }
 
@@ -622,6 +632,7 @@ void GameWindow::paintEvent(QPaintEvent *event)
         p.setBrush(QColor(80, 40, 40));
         p.drawRoundedRect(quitBtn, 4, 4);
         p.drawText(quitBtn, Qt::AlignCenter, "Quit");
+        p.restore();
     }
 
     const Level*  level  = m_game->level();

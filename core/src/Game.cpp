@@ -217,7 +217,9 @@ void Game::handleInput(Direction dir)
     if (interaction.coinCollected) {
         emit coinCollected(interaction.coinsCollectedTotal);
     }
+    bool clueShownThisStep = false;
     for (const QString& clue : interaction.revealedClues) {
+        clueShownThisStep = true;
         if (m_aiHelper && m_aiHelper->isEnabled()) {
             m_aiHelper->rephrase(clue, [this](QString transformed) {
                 transformed = transformed.trimmed();
@@ -232,10 +234,10 @@ void Game::handleInput(Direction dir)
     }
     if (interaction.wallOpened) {
         emit wallOpened();
-    } else if (interaction.triggerActivated) {
+    } else if (interaction.triggerActivated && !clueShownThisStep) {
         emit clueRevealed("The pressure plate clicks, but no nearby wall moved.");
     }
-    if (interaction.treasureUnlocked) {
+    if (interaction.treasureUnlocked && !clueShownThisStep) {
         emit treasureUnlocked();
     }
     if (interaction.won) {
