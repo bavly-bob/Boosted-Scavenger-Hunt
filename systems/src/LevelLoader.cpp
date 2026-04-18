@@ -3,6 +3,7 @@
 #include "Chamber.h"
 #include "ClueTrigger.h"
 #include "Coin.h"
+#include "Enemy.h"
 #include "HiddenWall.h"
 #include "Level.h"
 #include "TreasureRoom.h"
@@ -278,6 +279,9 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
             ch.hasTreasureRoom = true;
             ch.treasurePos = QPoint(ch.x + ch.width / 2, ch.y + ch.height / 2);
         }
+        if (co.value("hasEnemy").toBool(false)) {
+            ch.hasEnemy = true;
+        }
         chambers.push_back(ch);
     }
 
@@ -312,13 +316,19 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         }
     }
 
-    // Place coins
-    for (const Chamber& ch : chambers) {
+    // Place objects
+    for (int i = 0; i < chambers.size(); ++i) {
+        const Chamber& ch = chambers[i];
         for (const QPoint& cp : ch.coinPositions) {
             level->addCoin(new Coin(cp.x(), cp.y(), 100));
         }
         if (ch.hasTreasureRoom) {
             level->setTreasureRoom(new TreasureRoom(ch.treasurePos.x(), ch.treasurePos.y()));
+        }
+        if (i != spawnChamberIdx && ch.hasEnemy) {
+            const int ex = ch.x + 1 + rng.bounded(qMax(1, ch.width  - 2));
+            const int ey = ch.y + 1 + rng.bounded(qMax(1, ch.height - 2));
+            level->addEnemy(new Enemy(ex, ey));
         }
     }
 
@@ -521,11 +531,19 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
     chambers[farthest].treasurePos = chambers[farthest].centre();
 
     // Place game objects
-    for (Chamber& ch : chambers) {
+    for (int i = 0; i < chambers.size(); ++i) {
+        Chamber& ch = chambers[i];
         for (const QPoint& cp : ch.coinPositions)
             level->addCoin(new Coin(cp.x(), cp.y(), 100));
         if (ch.hasTreasureRoom)
             level->setTreasureRoom(new TreasureRoom(ch.treasurePos.x(), ch.treasurePos.y()));
+        
+        // Spawn enemies in some chambers depending on difficulty
+        if (i != 0 && rng.bounded(100) < (difficulty * 25 + 25)) {
+            const int ex = ch.x + 1 + rng.bounded(qMax(1, ch.width  - 2));
+            const int ey = ch.y + 1 + rng.bounded(qMax(1, ch.height - 2));
+            level->addEnemy(new Enemy(ex, ey));
+        }
     }
 
     // Clues

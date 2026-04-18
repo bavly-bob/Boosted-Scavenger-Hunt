@@ -13,6 +13,7 @@
 class ClueManager;
 class ClueTrigger;
 class Coin;
+class Enemy;
 class GameObject;
 class HiddenWall;
 struct InteractionResult;
@@ -39,6 +40,7 @@ class Level {
     QVector<HiddenWall*> m_hiddenWalls;
     QVector<Coin*> m_coins;
     QVector<ClueTrigger*> m_clueTriggers;
+    QVector<Enemy*> m_enemies;
     TreasureRoom* m_treasureRoom;
 
     // Fast spatial lookup (tileX,tileY) -> object pointer.
@@ -47,6 +49,7 @@ class Level {
     QHash<quint64, HiddenWall*> m_hiddenWallByPos;
     QHash<quint64, Coin*> m_coinByPos;
     QHash<quint64, ClueTrigger*> m_clueTriggerByPos;
+    QHash<quint64, Enemy*> m_enemyByPos;
 
 public:
     Level();
@@ -79,9 +82,11 @@ public:
     void addHiddenWall(HiddenWall* wall);
     void addCoin(Coin* coin);
     void addClueTrigger(ClueTrigger* clue);
+    void addEnemy(Enemy* enemy);
 
     const QList<GameObject*>& getObjects() const;
     const QVector<Coin*>& getCoins() const;
+    const QVector<Enemy*>& getEnemies() const;
 
     bool isInBounds(int x, int y) const;
     bool isWalkable(int x, int y) const;
@@ -94,6 +99,7 @@ public:
     HiddenWall* hiddenWallAt(int x, int y) const;
     Coin* coinAt(int x, int y) const;
     ClueTrigger* clueTriggerAt(int x, int y) const;
+    Enemy* enemyAt(int x, int y) const;
 
     // Applies side-effects for stepping onto a tile (coins, triggers, etc.).
     InteractionResult interactAt(int x, int y, Player& player, ClueManager& clues);

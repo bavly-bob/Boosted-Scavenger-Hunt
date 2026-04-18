@@ -1,9 +1,12 @@
 #include "Game.h"
 
 #include "ClueManager.h"
+#include "Enemy.h"
 #include "Level.h"
 #include "LevelLoader.h"
 #include "Player.h"
+
+#include "AIHelper.h"
 
 #include "InteractionResult.h"
 
@@ -32,7 +35,8 @@ Game::Game(QObject* parent)
       m_timeRemaining(0),
       m_currentLevelIndex(0),
       m_clueManager(std::make_unique<ClueManager>()),
-      m_timer(new QTimer(this))
+    m_timer(new QTimer(this)),
+    m_aiHelper(std::make_unique<AIHelper>(this))
 {
     m_timer->setInterval(1000);
     connect(m_timer, &QTimer::timeout, this, &Game::onTick);
@@ -148,6 +152,17 @@ void Game::handleInput(Direction dir)
         return;
     }
 
+    // Check collision with enemies after player moves
+    for (Enemy* enemy : m_currentLevel->getEnemies()) {
+        if (!enemy->isDead() && enemy->getX() == newPos.x() && enemy->getY() == newPos.y()) {
+            m_state = GameState::GAME_OVER;
+            m_timer->stop();
+            emit gameUpdated();
+            emit gameOver(false, m_score);
+            return;
+        }
+    }
+
     InteractionResult interaction = m_currentLevel->interactAt(newPos.x(), newPos.y(), *m_player, *m_clueManager);
     if (interaction.scoreDelta != 0) {
         m_score += interaction.scoreDelta;
@@ -156,7 +171,13 @@ void Game::handleInput(Direction dir)
         emit coinCollected(interaction.coinsCollectedTotal);
     }
     for (const QString& clue : interaction.revealedClues) {
-        emit clueRevealed(clue);
+        if (m_aiHelper && m_aiHelper->isEnabled()) {
+            m_aiHelper->rephrase(clue, [this](QString transformed) {
+                emit clueRevealed(transformed);
+            });
+        } else {
+            emit clueRevealed(clue);
+        }
     }
     if (interaction.wallOpened) {
         emit wallOpened();
@@ -251,9 +272,24 @@ void Game::onTick()
         return;
     }
 
-    // Advance player animation each tick.
+    // Advance animations and logic
     if (m_player) {
         m_player->advanceAnimation();
+    }
+    if (m_currentLevel) {
+        for (Enemy* enemy : m_currentLevel->getEnemies()) {
+            enemy->advanceAnimation();
+            enemy->update(*m_currentLevel, *m_player);
+            
+            // Check collision with player after enemy moves
+            if (!enemy->isDead() && m_player && enemy->getX() == m_player->getX() && enemy->getY() == m_player->getY()) {
+                m_state = GameState::GAME_OVER;
+                m_timer->stop();
+                emit gameUpdated();
+                emit gameOver(false, m_score);
+                return;
+            }
+        }
     }
 
     if (m_timeRemaining > 0) {

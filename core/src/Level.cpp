@@ -5,6 +5,7 @@
 #include "ClueManager.h"
 #include "ClueTrigger.h"
 #include "Coin.h"
+#include "Enemy.h"
 #include "HiddenWall.h"
 #include "Player.h"
 #include "TreasureRoom.h"
@@ -183,6 +184,13 @@ void Level::addClueTrigger(ClueTrigger* clue)
     setTileAndCollision(clue->getX(), clue->getY(), static_cast<int>(CellType::ClueTrigger), false);
 }
 
+void Level::addEnemy(Enemy* enemy)
+{
+    addOwnedObject(enemy);
+    m_enemies.push_back(enemy);
+    m_enemyByPos.insert(posKey(enemy->getX(), enemy->getY()), enemy);
+}
+
 const QList<GameObject*>& Level::getObjects() const
 {
     return m_objects;
@@ -191,6 +199,11 @@ const QList<GameObject*>& Level::getObjects() const
 const QVector<Coin*>& Level::getCoins() const
 {
     return m_coins;
+}
+
+const QVector<Enemy*>& Level::getEnemies() const
+{
+    return m_enemies;
 }
 
 bool Level::isInBounds(int x, int y) const
@@ -303,6 +316,16 @@ Coin* Level::coinAt(int x, int y) const
 ClueTrigger* Level::clueTriggerAt(int x, int y) const
 {
     return m_clueTriggerByPos.value(posKey(x, y), nullptr);
+}
+
+Enemy* Level::enemyAt(int x, int y) const
+{
+    // Note: Enemies move, so a static hash map isn't reliable for moving objects.
+    // We should search the list instead for real-time positions.
+    for (Enemy* e : m_enemies) {
+        if (e->getX() == x && e->getY() == y) return e;
+    }
+    return nullptr;
 }
 
 InteractionResult Level::interactAt(int x, int y, Player& player, ClueManager& clues)
