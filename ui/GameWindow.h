@@ -6,6 +6,7 @@
 
 #include <QElapsedTimer>
 #include <QPointF>
+#include <QPixmap>
 #include <QWidget>
 
 class QTimer;
@@ -58,13 +59,22 @@ private:
     SpriteManager     m_spriteManager;
     QElapsedTimer     m_frameTimer;
     float             m_deltaMs;
+    QVector<QPixmap>  m_floorTiles;
+    QVector<QPixmap>  m_wallTiles;
+    QPixmap           m_treasurePedestalTile;
+    QPixmap           m_pressurePlateTile;
+    QPixmap           m_vignetteOverlay;
+    QPixmap           m_fogPatchOverlay;
+    QPixmap           m_floorTileSheet;
+    QPixmap           m_wallTileSheet;
+    QPixmap           m_propsTileSheet;
 
     QString  m_statusText;
     bool     m_levelsConfigured;
     bool     m_assetsLoaded;
     bool     m_statusIsAiHint;
 
-    static constexpr int    HUD_HEIGHT             = 72;
+    static constexpr int    HUD_HEIGHT             = 96;
     static constexpr int    TILE_SIZE               = 32;
     static constexpr int    VIEWPORT_WIDTH          = 800;
     static constexpr int    VIEWPORT_HEIGHT         = 600;

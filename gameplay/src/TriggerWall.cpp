@@ -1,5 +1,7 @@
 #include "TriggerWall.h"
 
+#include "SpriteManager.h"
+
 #include <QPainter>
 
 TriggerWall::TriggerWall(int x, int y, const QVector<QPoint>& opens)
@@ -17,6 +19,17 @@ QString TriggerWall::getType() const
 void TriggerWall::draw(QPainter& painter, int cellSize) const
 {
     const QRect r(m_x * cellSize, m_y * cellSize, cellSize, cellSize);
+
+    if (const SpriteManager* sm = spriteManager()) {
+        const QString key = m_triggered
+                            ? QStringLiteral("pressure_plate_on")
+                            : QStringLiteral("pressure_plate");
+        const QPixmap& pix = sm->sprite(key);
+        if (!pix.isNull()) {
+            painter.drawPixmap(r, pix);
+            return;
+        }
+    }
 
     painter.save();
     painter.setPen(QPen(QColor(45, 45, 50), 1));

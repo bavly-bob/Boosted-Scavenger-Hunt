@@ -229,7 +229,11 @@ void Game::handleInput(Direction dir)
                 emit clueRevealed(transformed);
             });
         } else {
-            emit clueRevealed(clue);
+            QString fallbackHint = clue.trimmed();
+            if (!fallbackHint.startsWith("AI Hint:", Qt::CaseInsensitive)) {
+                fallbackHint.prepend("AI Hint: ");
+            }
+            emit clueRevealed(fallbackHint);
         }
     }
     if (interaction.wallOpened) {

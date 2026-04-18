@@ -26,4 +26,7 @@ public:
     // Inject a SpriteManager so draw() can use textured rendering.
     // The Wall does NOT own the SpriteManager.
     void setSpriteManager(const SpriteManager* sm);
+
+protected:
+    const SpriteManager* spriteManager() const { return m_sprites; }
 };

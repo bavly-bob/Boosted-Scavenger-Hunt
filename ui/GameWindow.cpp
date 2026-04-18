@@ -13,6 +13,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QKeyEvent>
 #include <QLinearGradient>
 #include <QPainter>
@@ -56,6 +57,76 @@ QString findAssetsDir()
         if (QDir(c).exists()) return QDir(c).absolutePath();
     }
     return QString();
+}
+
+QString firstExistingFile(const QStringList& paths)
+{
+    for (const QString& path : paths) {
+        if (QFile::exists(path)) {
+            return path;
+        }
+    }
+    return QString();
+}
+
+bool loadSheetWithFallback(QPixmap& out, const QStringList& candidatePaths)
+{
+    const QString path = firstExistingFile(candidatePaths);
+    if (path.isEmpty()) {
+        return false;
+    }
+    QPixmap pix(path);
+    if (pix.isNull()) {
+        return false;
+    }
+    out = pix;
+    return true;
+}
+
+bool loadTileWithFallback(QPixmap& out, const QStringList& candidatePaths, int tileSize)
+{
+    const QString path = firstExistingFile(candidatePaths);
+    if (path.isEmpty()) {
+        return false;
+    }
+
+    QPixmap pix(path);
+    if (pix.isNull()) {
+        return false;
+    }
+
+    if (pix.width() != tileSize || pix.height() != tileSize) {
+        pix = pix.scaled(tileSize, tileSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    }
+    out = pix;
+    return true;
+}
+
+QPixmap tintedPixmap(const QPixmap& src, const QColor& tint, int alpha)
+{
+    if (src.isNull()) {
+        return QPixmap();
+    }
+
+    QPixmap out = src;
+    QPainter painter(&out);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceAtop);
+    QColor overlay = tint;
+    overlay.setAlpha(alpha);
+    painter.fillRect(out.rect(), overlay);
+    painter.end();
+    return out;
+}
+
+quint32 tileHash(int x, int y, quint32 salt = 0u)
+{
+    quint32 h = static_cast<quint32>(x) * 0x9e3779b9u;
+    h ^= static_cast<quint32>(y) * 0x85ebca6bu;
+    h ^= salt * 0xc2b2ae35u;
+    h ^= (h >> 16);
+    h *= 0x7feb352du;
+    h ^= (h >> 15);
+    return h;
 }
 
 // Returns a colour to tint each tile based on its CellType.
@@ -205,6 +276,58 @@ GameWindow::GameWindow(QWidget *parent)
 
 // Helper: load individual frame PNGs from  assetsDir/player/<dir>/frame_0.png …
 // Returns true if at least one frame was loaded and a clip was registered.
+static QRect alphaBounds(const QImage& img)
+{
+    int minX = img.width();
+    int minY = img.height();
+    int maxX = -1;
+    int maxY = -1;
+
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            if (qAlpha(img.pixel(x, y)) > 8) {
+                minX = qMin(minX, x);
+                minY = qMin(minY, y);
+                maxX = qMax(maxX, x);
+                maxY = qMax(maxY, y);
+            }
+        }
+    }
+
+    if (maxX < minX || maxY < minY) {
+        return QRect();
+    }
+    return QRect(QPoint(minX, minY), QPoint(maxX, maxY));
+}
+
+static QPixmap makePlayerFrame(const QImage& source, int tileSize)
+{
+    if (source.isNull()) {
+        return QPixmap();
+    }
+
+    QImage rgba = source.convertToFormat(QImage::Format_ARGB32);
+    const QRect bounds = alphaBounds(rgba);
+    if (bounds.isValid()) {
+        rgba = rgba.copy(bounds);
+    }
+
+    const QSize target = rgba.size().scaled(tileSize - 2, tileSize - 2, Qt::KeepAspectRatio);
+    QPixmap frame(tileSize, tileSize);
+    frame.fill(Qt::transparent);
+
+    QPainter painter(&frame);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    const QRect dst((tileSize - target.width()) / 2,
+                    (tileSize - target.height()) / 2,
+                    target.width(),
+                    target.height());
+    painter.drawImage(dst, rgba);
+    painter.end();
+
+    return frame;
+}
+
 static bool loadPlayerDirectionFrames(SpriteManager& sm,
                                       const QString&  assetsDir,
                                       const char*     dirName,
@@ -218,21 +341,17 @@ static bool loadPlayerDirectionFrames(SpriteManager& sm,
         if (!QFile::exists(path)) break;
         QImage img(path);
         if (img.isNull()) break;
-        // Strip background: mask out pixel (0,0) colour only if it differs
-        // clearly from the sprite content (alpha channel is preferred).
-        QPixmap pix;
-        if (img.hasAlphaChannel()) {
-            pix = QPixmap::fromImage(img);
-        } else {
-            // Use a colour-key mask only when there is no alpha channel.
+        if (!img.hasAlphaChannel()) {
+            // Safety fallback for non-alpha PNGs.
             QColor bgColor = img.pixelColor(0, 0);
-            pix = QPixmap::fromImage(img);
-            pix.setMask(pix.createMaskFromColor(bgColor, Qt::MaskOutColor));
+            QPixmap tmp = QPixmap::fromImage(img);
+            tmp.setMask(tmp.createMaskFromColor(bgColor, Qt::MaskOutColor));
+            img = tmp.toImage();
         }
-        if (!pix.isNull()) {
-            pix = pix.scaled(tileSize, tileSize,
-                             Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-            frames.append(pix);
+
+        QPixmap frame = makePlayerFrame(img, tileSize);
+        if (!frame.isNull()) {
+            frames.append(frame);
         }
     }
 
@@ -267,16 +386,89 @@ void GameWindow::loadAssets()
     if (assetsDir.isEmpty()) return;
 
     // ── Wall sprite sheet (128×32 → 4 variants of 32×32) ──────────────────
-    const QString wallSheet = assetsDir + "/wall_sprites.png";
-    QPixmap wallPix(wallSheet);
-    if (!wallPix.isNull()) {
-        const int tileW = wallPix.width() / 4;
-        const int tileH = wallPix.height();
+    m_floorTiles.clear();
+    m_wallTiles.clear();
+    m_treasurePedestalTile = QPixmap();
+    m_pressurePlateTile = QPixmap();
+    m_vignetteOverlay = QPixmap();
+    m_fogPatchOverlay = QPixmap();
+    m_floorTileSheet = QPixmap();
+    m_wallTileSheet = QPixmap();
+    m_propsTileSheet = QPixmap();
+
+    const QString dungeonDir = assetsDir + "/dungeon";
+
+    const QStringList floorFiles = {
+        dungeonDir + "/tiles/floor_stone_base_16.png",
+        dungeonDir + "/tiles/floor_stone_cracked_16.png",
+        dungeonDir + "/tiles/floor_moss_patch_16.png",
+        dungeonDir + "/tiles/floor_rubble_16.png",
+        dungeonDir + "/tiles/floor_water_edge_16.png",
+    };
+    for (const QString& file : floorFiles) {
+        QPixmap pix;
+        if (loadTileWithFallback(pix, {file}, TILE_SIZE)) {
+            m_floorTiles.append(pix);
+        }
+    }
+
+    const QStringList wallFiles = {
+        dungeonDir + "/walls/wall_stone_block_16.png",
+        dungeonDir + "/walls/wall_stone_cracked_16.png",
+        dungeonDir + "/walls/wall_corner_inner_16.png",
+        dungeonDir + "/walls/wall_corner_outer_16.png",
+        dungeonDir + "/walls/wall_pillar_16.png",
+        dungeonDir + "/walls/door_arch_closed_16.png",
+        dungeonDir + "/walls/door_arch_open_16.png",
+    };
+    for (int i = 0; i < wallFiles.size(); ++i) {
+        QPixmap pix;
+        if (loadTileWithFallback(pix, {wallFiles.at(i)}, TILE_SIZE)) {
+            m_wallTiles.append(pix);
+            m_spriteManager.loadPixmap(QString("wall_%1").arg(i), pix);
+        }
+    }
+
+    loadTileWithFallback(m_treasurePedestalTile,
+                         {dungeonDir + "/props/treasure_pedestal_16.png"},
+                         TILE_SIZE);
+    if (loadTileWithFallback(m_pressurePlateTile,
+                             {dungeonDir + "/props/pressure_plate_16.png"},
+                             TILE_SIZE)) {
+        m_spriteManager.loadPixmap("pressure_plate", m_pressurePlateTile);
+        m_spriteManager.loadPixmap("pressure_plate_on",
+                                   tintedPixmap(m_pressurePlateTile, QColor(120, 220, 130), 70));
+    }
+
+    loadSheetWithFallback(m_vignetteOverlay, {
+        dungeonDir + "/lighting/vignette_soft_256.png"
+    });
+    loadSheetWithFallback(m_fogPatchOverlay, {
+        dungeonDir + "/lighting/fog_patch_soft_64.png"
+    });
+
+    loadSheetWithFallback(m_floorTileSheet, {
+        dungeonDir + "/tiles/dungeon_floor_tiles.png"
+    });
+    loadSheetWithFallback(m_wallTileSheet, {
+        dungeonDir + "/walls/dungeon_wall_tiles.png"
+    });
+    loadSheetWithFallback(m_propsTileSheet, {
+        dungeonDir + "/props/dungeon_props.png"
+    });
+
+    if (m_wallTiles.isEmpty() && !m_wallTileSheet.isNull()) {
+        const int srcTileSize = 32;
+        const int cols = m_wallTileSheet.width() / srcTileSize;
         for (int v = 0; v < 4; ++v) {
-            QPixmap tile = wallPix.copy(v * tileW, 0, tileW, tileH)
+            if (v >= cols) {
+                break;
+            }
+            QPixmap tile = m_wallTileSheet.copy(v * srcTileSize, 0, srcTileSize, srcTileSize)
                                .scaled(TILE_SIZE, TILE_SIZE,
                                        Qt::IgnoreAspectRatio,
-                                       Qt::SmoothTransformation);
+                                       Qt::FastTransformation);
+            m_wallTiles.append(tile);
             m_spriteManager.loadPixmap(QString("wall_%1").arg(v), tile);
         }
     }
@@ -579,45 +771,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
                    Qt::AlignRight | Qt::AlignVCenter,
                    QString("⏱ %1").arg(timeText));
 
-        // Status text
-        if (!m_statusText.isEmpty()) {
-            if (m_statusIsAiHint) {
-                QRect hintRect(12, 50, width() - 24, 20);
-                p.setBrush(QColor(24, 38, 56, 220));
-                p.setPen(QPen(QColor(120, 200, 255), 1));
-                p.drawRoundedRect(hintRect, 4, 4);
-
-                QFont labelFont = p.font();
-                labelFont.setBold(true);
-                labelFont.setPointSize(8);
-                p.setFont(labelFont);
-                p.setPen(QColor(170, 225, 255));
-                p.drawText(QRect(18, 52, 90, 16),
-                           Qt::AlignLeft | Qt::AlignVCenter, "[*] AI Hint");
-
-                QString hintBody = m_statusText;
-                if (hintBody.startsWith("AI Hint:", Qt::CaseInsensitive)) {
-                    hintBody = hintBody.mid(QString("AI Hint:").size()).trimmed();
-                }
-
-                QFont bodyFont = p.font();
-                bodyFont.setBold(false);
-                p.setFont(bodyFont);
-                p.setPen(QColor(225, 235, 245));
-                const QRect hintTextRect(108, 52, width() - 126, 16);
-                const QString elidedHint = p.fontMetrics().elidedText(hintBody, Qt::ElideRight, hintTextRect.width());
-                p.drawText(hintTextRect, Qt::AlignLeft | Qt::AlignVCenter, elidedHint);
-            } else {
-                QFont statusFont = p.font();
-                statusFont.setItalic(true);
-                p.setFont(statusFont);
-                p.setPen(QColor(230, 200, 120));
-                const QRect statusRect(12, 52, width() - 24, 16);
-                const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
-                p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
-            }
-        }
-
         // Draw HUD buttons (Restart and Quit)
         p.setPen(QPen(QColor(200, 200, 200), 1));
         
@@ -666,6 +819,24 @@ void GameWindow::paintEvent(QPaintEvent *event)
     const int endX   = qMin(level->getWidth()  - 1, (camX + viewPixelW + TILE_SIZE - 1) / TILE_SIZE);
     const int endY   = qMin(level->getHeight() - 1, (camY + viewPixelH + TILE_SIZE - 1) / TILE_SIZE);
 
+    auto drawSheetTile = [&p](const QPixmap& sheet, int tileIndex, const QRect& targetRect) -> bool {
+        if (sheet.isNull()) {
+            return false;
+        }
+        const int srcTileSize = 32;
+        const int cols = sheet.width() / srcTileSize;
+        const int rows = sheet.height() / srcTileSize;
+        const int count = cols * rows;
+        if (count <= 0) {
+            return false;
+        }
+        const int idx = ((tileIndex % count) + count) % count;
+        const int sx = (idx % cols) * srcTileSize;
+        const int sy = (idx / cols) * srcTileSize;
+        p.drawPixmap(targetRect, sheet, QRect(sx, sy, srcTileSize, srcTileSize));
+        return true;
+    };
+
     // ── Base tile pass ────────────────────────────────────────────────────
     for (int y = startY; y <= endY; ++y) {
         for (int x = startX; x <= endX; ++x) {
@@ -675,63 +846,75 @@ void GameWindow::paintEvent(QPaintEvent *event)
             const CellType ct = static_cast<CellType>(level->tileAt(x, y));
 
             if (ct == CellType::Wall || ct == CellType::HiddenWall) {
-                // ── Pixel-art style stone wall ─────────────────────────────
-                // 3 colour variants for natural variation
-                static const QColor wallBase[] = {
-                    QColor(55, 52, 60),   // dark slate
-                    QColor(48, 56, 44),   // mossy stone
-                    QColor(70, 56, 42),   // brown brick
-                };
-                const int variant = ((x * 7 + y * 3) & 0xFF) % 3;
-                const QColor base = wallBase[variant];
-                const QColor light = base.lighter(145);
-                const QColor dark  = base.darker(165);
-                const QColor mortar(20, 18, 16);
-
-                // Face fill with slight top-to-bottom gradient
-                QLinearGradient faceGrad(cell.topLeft(), cell.bottomLeft());
-                faceGrad.setColorAt(0.0, base.lighter(115));
-                faceGrad.setColorAt(0.5, base);
-                faceGrad.setColorAt(1.0, base.darker(130));
-                p.fillRect(cell, faceGrad);
-
-                // Top highlight — simulates top-lit 3D depth
-                p.setPen(QPen(light, 2));
-                p.drawLine(cell.topLeft(), cell.topRight());
-
-                // Left highlight
-                p.setPen(QPen(light.darker(110), 1));
-                p.drawLine(cell.topLeft(), cell.bottomLeft());
-
-                // Bottom shadow
-                p.setPen(QPen(dark, 2));
-                p.drawLine(cell.bottomLeft(), cell.bottomRight());
-
-                // Right shadow
-                p.setPen(QPen(dark.lighter(110), 1));
-                p.drawLine(cell.topRight(), cell.bottomRight());
-
-                // Horizontal mortar line at mid-height
-                p.setPen(QPen(mortar, 1));
-                const int halfH = cell.top() + TILE_SIZE / 2;
-                p.drawLine(cell.left() + 2, halfH, cell.right() - 2, halfH);
-
-                // Vertical mortar lines (offset per row for brick stagger)
-                const int offset = (y % 2 == 0) ? TILE_SIZE / 4 : 3 * TILE_SIZE / 4;
-                const int vx = cell.left() + offset;
-                if (vx > cell.left() && vx < cell.right()) {
-                    p.drawLine(vx, cell.top() + 2, vx, halfH - 2);
+                bool drewWall = false;
+                if (!m_wallTiles.isEmpty()) {
+                    const quint32 roll = tileHash(x, y, 17u) % 100u;
+                    int wallIdx = 0;
+                    if (roll < 65u) {
+                        wallIdx = 0;  // stone block
+                    } else if (roll < 87u) {
+                        wallIdx = qMin(1, m_wallTiles.size() - 1); // cracked
+                    } else if (roll < 93u) {
+                        wallIdx = qMin(2, m_wallTiles.size() - 1); // corner inner
+                    } else if (roll < 97u) {
+                        wallIdx = qMin(3, m_wallTiles.size() - 1); // corner outer
+                    } else {
+                        wallIdx = qMin(4, m_wallTiles.size() - 1); // pillar
+                    }
+                    p.drawPixmap(cell, m_wallTiles.at(wallIdx));
+                    drewWall = true;
                 }
-                const int vx2 = cell.left() + ((offset + TILE_SIZE / 2) % TILE_SIZE);
-                if (vx2 > cell.left() && vx2 < cell.right()) {
-                    p.drawLine(vx2, halfH + 2, vx2, cell.bottom() - 2);
+                if (!drewWall && !drawSheetTile(m_wallTileSheet, (x * 17 + y * 31) % 256, cell)) {
+                    static const QColor wallBase[] = {
+                        QColor(55, 52, 60),
+                        QColor(48, 56, 44),
+                        QColor(70, 56, 42),
+                    };
+                    p.fillRect(cell, wallBase[((x * 7 + y * 3) & 0xFF) % 3]);
                 }
                 continue;
             }
 
-            const QColor base = tileColour(ct, x, y);
-            p.fillRect(cell, base);
-            drawTileBorder(p, cell, ct);
+            bool drewFloor = false;
+            if (!m_floorTiles.isEmpty()) {
+                const quint32 roll = tileHash(x, y, 29u) % 100u;
+                int floorIdx = 0;
+                if (ct == CellType::Corridor) {
+                    // Corridors must read as a clean path: always stone base.
+                    floorIdx = 0;
+                } else {
+                    if (roll < 60u) {
+                        floorIdx = 0; // base
+                    } else if (roll < 78u) {
+                        floorIdx = qMin(1, m_floorTiles.size() - 1); // cracked
+                    } else if (roll < 92u) {
+                        floorIdx = qMin(2, m_floorTiles.size() - 1); // moss
+                    } else {
+                        floorIdx = qMin(3, m_floorTiles.size() - 1); // rubble
+                    }
+                }
+                p.drawPixmap(cell, m_floorTiles.at(floorIdx));
+                drewFloor = true;
+            } else if (!m_floorTileSheet.isNull()) {
+                int floorVariant = (x * 13 + y * 19) % 256;
+                if (ct == CellType::Corridor) {
+                    floorVariant = 0;
+                }
+                drewFloor = drawSheetTile(m_floorTileSheet, floorVariant, cell);
+            }
+            if (!drewFloor) {
+                const QColor base = tileColour(ct, x, y);
+                p.fillRect(cell, base);
+                drawTileBorder(p, cell, ct);
+            }
+
+            if (ct == CellType::TreasureRoom) {
+                if (!m_treasurePedestalTile.isNull()) {
+                    p.drawPixmap(cell, m_treasurePedestalTile);
+                } else if (!m_propsTileSheet.isNull()) {
+                    drawSheetTile(m_propsTileSheet, 0, cell);
+                }
+            }
         }
     }
 
@@ -809,7 +992,77 @@ void GameWindow::paintEvent(QPaintEvent *event)
                          r * TILE_SIZE * 2, r * TILE_SIZE * 2), glow);
     }
 
+    if (!m_fogPatchOverlay.isNull()) {
+        const int fogSize = TILE_SIZE * 2;
+        for (int fy = startY; fy <= endY; fy += 3) {
+            for (int fx = startX; fx <= endX; fx += 3) {
+                const quint32 h = tileHash(fx, fy, 211u);
+                if ((h % 100u) < 18u) {
+                    const int screenX = fx * TILE_SIZE - camX;
+                    const int screenY = fy * TILE_SIZE - camY;
+                    p.drawPixmap(QRect(screenX, screenY, fogSize, fogSize),
+                                 m_fogPatchOverlay,
+                                 QRect(0, 0, m_fogPatchOverlay.width(), m_fogPatchOverlay.height()));
+                }
+            }
+        }
+    }
+
+    if (!m_vignetteOverlay.isNull()) {
+        p.drawPixmap(QRect(0, 0, viewPixelW, viewPixelH),
+                     m_vignetteOverlay,
+                     QRect(0, 0, m_vignetteOverlay.width(), m_vignetteOverlay.height()));
+    }
+
     p.restore(); // end of HUD translate
+
+    // Draw hints/status as a final overlay so they always stay above gameplay.
+    if (!m_statusText.isEmpty()) {
+        p.save();
+        const int overlayY = HUD_HEIGHT + 8;
+        const int overlayH = 28;
+        const QRect panelRect(12, overlayY, width() - 24, overlayH);
+
+        if (m_statusIsAiHint) {
+            p.setBrush(QColor(24, 38, 56, 225));
+            p.setPen(QPen(QColor(120, 200, 255), 1));
+            p.drawRoundedRect(panelRect, 5, 5);
+
+            QFont labelFont = p.font();
+            labelFont.setBold(true);
+            labelFont.setPointSize(8);
+            p.setFont(labelFont);
+            p.setPen(QColor(170, 225, 255));
+            p.drawText(QRect(panelRect.x() + 8, panelRect.y() + 6, 84, 16),
+                       Qt::AlignLeft | Qt::AlignVCenter, "[*] AI Hint");
+
+            QString hintBody = m_statusText;
+            if (hintBody.startsWith("AI Hint:", Qt::CaseInsensitive)) {
+                hintBody = hintBody.mid(QString("AI Hint:").size()).trimmed();
+            }
+            QFont bodyFont = p.font();
+            bodyFont.setBold(false);
+            p.setFont(bodyFont);
+            p.setPen(QColor(225, 235, 245));
+            const QRect hintTextRect(panelRect.x() + 96, panelRect.y() + 6, panelRect.width() - 104, 16);
+            const QString elidedHint = p.fontMetrics().elidedText(hintBody, Qt::ElideRight, hintTextRect.width());
+            p.drawText(hintTextRect, Qt::AlignLeft | Qt::AlignVCenter, elidedHint);
+        } else {
+            p.setBrush(QColor(34, 28, 22, 220));
+            p.setPen(QPen(QColor(210, 180, 120), 1));
+            p.drawRoundedRect(panelRect, 5, 5);
+
+            QFont statusFont = p.font();
+            statusFont.setItalic(true);
+            statusFont.setPointSize(9);
+            p.setFont(statusFont);
+            p.setPen(QColor(240, 215, 150));
+            const QRect statusRect(panelRect.x() + 10, panelRect.y() + 5, panelRect.width() - 20, 18);
+            const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
+            p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
+        }
+        p.restore();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

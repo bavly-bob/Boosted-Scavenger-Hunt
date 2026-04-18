@@ -64,12 +64,38 @@ The codebase is organized into clean, decoupled modules:
 - `systems/`: Managers for assets (`SpriteManager`), level loading/parsing (`LevelLoader`), input, and clues.
 - `ui/`: Qt-based rendering (`GameWindow`), HUD overlay, and menu screens.
 - `assets/`: Image sprites and textures.
+  - `assets/player/`: Directional player frames (`down|up|left|right|idle/frame_N.png`).
+  - `assets/dungeon/tiles/`: Floor sheet (`dungeon_floor_tiles.png`).
+  - `assets/dungeon/walls/`: Wall sheet (`dungeon_wall_tiles.png`).
+  - `assets/dungeon/props/`: Props sheet (`dungeon_props.png`).
+  - `assets/dungeon/lighting/`: Lighting overlays and glow textures.
 - `levels/`: JSON files defining static and procedurally generated level parameters.
+
+### Asset Layout Used By Runtime
+
+```text
+assets/
+  player/
+    down/frame_0.png ...
+    up/frame_0.png ...
+    left/frame_0.png ...
+    right/frame_0.png ...
+    idle/frame_0.png ...
+  dungeon/
+    tiles/
+      dungeon_floor_tiles.png
+    walls/
+      dungeon_wall_tiles.png
+    props/
+      dungeon_props.png
+    lighting/
+      ...
+```
 
 ## 👥 Credits & Team
 
 - **Bavly**: Integration, Testing Lead, Bug Tracking, Project Management
-- **Member A**: Game Logic, Movement, Rules, Target Interaction
+- **Ali**: Game Logic, Movement, Rules, Target Interaction
 - **Youssef**: GUI, Qt Interface, Buttons, Screens, Score Display
 - **Abdallah**: OOP Structure, Classes, Inheritance, Architecture
 - **Ahmed**: Scoring System, Game State, Win/Lose Logic
