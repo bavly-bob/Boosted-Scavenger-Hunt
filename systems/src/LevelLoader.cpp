@@ -344,6 +344,27 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         }
     }
 
+    // Trigger walls (chamber format) — walls that open when pressed from outside
+    const QJsonArray triggerWalls = root.value("triggerWalls").toArray();
+    for (const QJsonValue& value : triggerWalls) {
+        const QJsonObject tw = value.toObject();
+        const int x = tw.value("x").toInt();
+        const int y = tw.value("y").toInt();
+        
+        QVector<QPoint> opens;
+        const QJsonArray opensWalls = tw.value("opensWalls").toArray();
+        for (const QJsonValue& openValue : opensWalls) {
+            const QJsonArray xy = openValue.toArray();
+            if (xy.size() >= 2) {
+                opens.push_back(QPoint(xy.at(0).toInt(), xy.at(1).toInt()));
+            }
+        }
+        
+        if (level->isInBounds(x, y) && !opens.isEmpty()) {
+            level->addTriggerWall(new TriggerWall(x, y, opens));
+        }
+    }
+
     // Clues
     const QJsonArray clues = root.value("clues").toArray().isEmpty()
         ? buildDefaultClues()
