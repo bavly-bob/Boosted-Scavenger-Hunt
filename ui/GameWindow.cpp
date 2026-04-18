@@ -137,6 +137,7 @@ GameWindow::GameWindow(QWidget *parent)
     connect(m_pauseOverlay, &PauseOverlay::restartRequested, this, [this]() {
         hidePauseOverlay();
         m_game->restartLevel();
+        resetExplored();
         resizeToCurrentLevel();
         injectSprites();
         setFocus();
@@ -152,6 +153,7 @@ GameWindow::GameWindow(QWidget *parent)
     connect(m_gameOverOverlay, &GameOverOverlay::nextLevelRequested, this, [this]() {
         m_gameOverOverlay->hide();
         m_game->nextLevel();
+        resetExplored();
         resizeToCurrentLevel();
         injectSprites();
         setFocus();
@@ -159,6 +161,7 @@ GameWindow::GameWindow(QWidget *parent)
     connect(m_gameOverOverlay, &GameOverOverlay::restartRequested, this, [this]() {
         m_gameOverOverlay->hide();
         m_game->restartLevel();
+        resetExplored();
         resizeToCurrentLevel();
         injectSprites();
         setFocus();
@@ -256,16 +259,10 @@ void GameWindow::startNewGame(Difficulty difficulty)
     m_gameOverOverlay->hide();
 
     m_game->startNewGame(difficulty);
+    resetExplored();
     resizeToCurrentLevel();
     snapCameraToPlayer();
     injectSprites();
-
-    if (const Level* level = m_game->level()) {
-        m_explored = QVector<QVector<bool>>(level->getHeight(),
-                                            QVector<bool>(level->getWidth(), false));
-    } else {
-        m_explored.clear();
-    }
 
     show();
     setFocus();
@@ -610,4 +607,14 @@ void GameWindow::showPauseOverlay()
 void GameWindow::hidePauseOverlay()
 {
     m_pauseOverlay->hide();
+}
+
+void GameWindow::resetExplored()
+{
+    if (const Level* level = m_game->level()) {
+        m_explored = QVector<QVector<bool>>(level->getHeight(),
+                                            QVector<bool>(level->getWidth(), false));
+    } else {
+        m_explored.clear();
+    }
 }
