@@ -62,16 +62,19 @@ MainMenu::MainMenu(QWidget *parent) : QWidget(parent)
     QPushButton *easy   = createButton("EASY",   QColor(80, 200, 120));
     QPushButton *medium = createButton("MEDIUM", QColor(230, 180,  60));
     QPushButton *hard   = createButton("HARD",   QColor(220,  80,  70));
+    QPushButton *quit   = createButton("QUIT GAME", QColor(100, 100, 100));
 
     btnLayout->addWidget(easy,   0, Qt::AlignCenter);
     btnLayout->addWidget(medium, 0, Qt::AlignCenter);
     btnLayout->addWidget(hard,   0, Qt::AlignCenter);
+    btnLayout->addWidget(quit,   0, Qt::AlignCenter);
     layout->addLayout(btnLayout);
 
     // Wire buttons to signal
     connect(easy,   &QPushButton::clicked, this, [this]{ emit difficultySelected(0); });
     connect(medium, &QPushButton::clicked, this, [this]{ emit difficultySelected(1); });
     connect(hard,   &QPushButton::clicked, this, [this]{ emit difficultySelected(2); });
+    connect(quit,   &QPushButton::clicked, this, [this]{ emit quitRequested(); });
 
     layout->addSpacerItem(new QSpacerItem(0, 25, QSizePolicy::Minimum, QSizePolicy::Expanding));
 

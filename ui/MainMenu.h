@@ -16,6 +16,7 @@ public:
 signals:
     // Emitted when a difficulty button is clicked (0=Easy, 1=Medium, 2=Hard)
     void difficultySelected(int difficulty);
+    void quitRequested();
 
 protected:
     // Paints the gradient background

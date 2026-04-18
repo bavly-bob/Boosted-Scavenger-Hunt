@@ -219,8 +219,29 @@ void GameWindow::loadAssets()
             c.frameCount  = 4;
             c.frameWidth  = 32;
             c.frameHeight = 32;
+            c.srcY        = row * 32;
             c.fps         = 8;
             m_spriteManager.registerClip(clipNames[row], c);
+        }
+    }
+
+    const QString enemySheet = assetsDir + "/enemy_sprites.png";
+    if (QFile::exists(enemySheet)) {
+        m_spriteManager.load("enemy_sheet", enemySheet);
+
+        const QStringList enemyClipNames = {
+            "enemy_idle", "enemy_move_down", "enemy_move_up",
+            "enemy_move_left", "enemy_move_right", "enemy_die"
+        };
+        for (int row = 0; row < enemyClipNames.size(); ++row) {
+            AnimationClip c;
+            c.spriteKey   = "enemy_sheet";
+            c.frameCount  = 4;
+            c.frameWidth  = 32;
+            c.frameHeight = 32;
+            c.srcY        = row * 32;
+            c.fps         = 8;
+            m_spriteManager.registerClip(enemyClipNames[row], c);
         }
     }
 }
@@ -243,6 +264,9 @@ void GameWindow::injectSprites()
             if (Wall* w = dynamic_cast<Wall*>(obj)) {
                 w->setSpriteManager(&m_spriteManager);
             }
+        }
+        for (Enemy* enemy : level->getEnemies()) {
+            enemy->setSpriteManager(&m_spriteManager);
         }
     }
 }
@@ -370,6 +394,21 @@ void GameWindow::paintEvent(QPaintEvent *event)
             p.drawText(QRect(12, 52, width() - 24, 16),
                        Qt::AlignLeft | Qt::AlignVCenter, m_statusText);
         }
+
+        // Draw HUD buttons (Restart and Quit)
+        p.setPen(QPen(QColor(200, 200, 200), 1));
+        
+        // Restart Button
+        QRect restartBtn(width() - 210, 6, 80, 24);
+        p.setBrush(QColor(60, 60, 80));
+        p.drawRoundedRect(restartBtn, 4, 4);
+        p.drawText(restartBtn, Qt::AlignCenter, "Restart");
+
+        // Quit Button
+        QRect quitBtn(width() - 120, 6, 80, 24);
+        p.setBrush(QColor(80, 40, 40));
+        p.drawRoundedRect(quitBtn, 4, 4);
+        p.drawText(quitBtn, Qt::AlignCenter, "Quit");
     }
 
     const Level*  level  = m_game->level();
@@ -546,6 +585,36 @@ void GameWindow::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
     m_pauseOverlay->setGeometry(rect());
     m_gameOverOverlay->setGeometry(rect());
+}
+
+void GameWindow::mousePressEvent(QMouseEvent *event)
+{
+    if (!event) return;
+
+    if (m_game->state() == GameState::PLAYING) {
+        // Check button rects
+        QRect restartBtn(width() - 210, 6, 80, 24);
+        QRect quitBtn(width() - 120, 6, 80, 24);
+
+        if (restartBtn.contains(event->pos())) {
+            m_game->restartLevel();
+            resetExplored();
+            resizeToCurrentLevel();
+            injectSprites();
+            setFocus();
+            return;
+        }
+
+        if (quitBtn.contains(event->pos())) {
+            m_game->pause();
+            m_gameOverOverlay->hide();
+            hide();
+            emit quitToMainMenuRequested();
+            return;
+        }
+    }
+
+    QWidget::mousePressEvent(event);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

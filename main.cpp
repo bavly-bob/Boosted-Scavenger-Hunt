@@ -8,6 +8,8 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     MainMenu menu;
     GameWindow *gameWindow = nullptr;
+    
+    QObject::connect(&menu, &MainMenu::quitRequested, &app, &QApplication::quit);
 
     QObject::connect(&menu, &MainMenu::difficultySelected, [&](int difficulty){
         menu.hide();
