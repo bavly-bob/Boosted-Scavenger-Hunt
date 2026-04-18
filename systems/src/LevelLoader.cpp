@@ -332,6 +332,18 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         }
     }
 
+    // Hidden walls (chamber format)
+    const QJsonArray hiddenWalls = root.value("hiddenWalls").toArray();
+    for (const QJsonValue& value : hiddenWalls) {
+        const QJsonArray xy = value.toArray();
+        if (xy.size() < 2) continue;
+        const int x = xy.at(0).toInt();
+        const int y = xy.at(1).toInt();
+        if (level->isInBounds(x, y)) {
+            level->addHiddenWall(new HiddenWall(x, y));
+        }
+    }
+
     // Clues
     const QJsonArray clues = root.value("clues").toArray().isEmpty()
         ? buildDefaultClues()

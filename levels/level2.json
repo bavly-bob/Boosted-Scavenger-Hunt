@@ -1,22 +1,22 @@
 {
   "name": "The Sunken Catacombs",
   "format": "chambers",
-  "width": 56,
-  "height": 38,
+  "width": 70,
+  "height": 50,
   "timeLimit": 150,
   "seed": 2002,
   "spawnChamber": 0,
   "chambers": [
     { "id": 0,  "x": 2,  "y": 2,  "w": 8,  "h": 6  },
-    { "id": 1,  "x": 14, "y": 2,  "w": 8,  "h": 5  },
+    { "id": 1,  "x": 14, "y": 2,  "w": 8,  "h": 5, "hasEnemy": true },
     { "id": 2,  "x": 28, "y": 1,  "w": 9,  "h": 6  },
-    { "id": 3,  "x": 42, "y": 2,  "w": 9,  "h": 7, "hasCoin": true },
+    { "id": 3,  "x": 42, "y": 2,  "w": 9,  "h": 7, "hasCoin": true, "hasEnemy": true },
     { "id": 4,  "x": 2,  "y": 14, "w": 7,  "h": 7, "hasCoin": true },
-    { "id": 5,  "x": 16, "y": 13, "w": 9,  "h": 8, "hasCoin": true },
-    { "id": 6,  "x": 30, "y": 12, "w": 8,  "h": 7  },
+    { "id": 5,  "x": 16, "y": 13, "w": 9,  "h": 8, "hasCoin": true, "hasEnemy": true },
+    { "id": 6,  "x": 30, "y": 12, "w": 8,  "h": 7, "hasEnemy": true },
     { "id": 7,  "x": 43, "y": 13, "w": 8,  "h": 8, "hasCoin": true },
     { "id": 8,  "x": 5,  "y": 26, "w": 8,  "h": 7, "hasCoin": true },
-    { "id": 9,  "x": 20, "y": 26, "w": 9,  "h": 7  },
+    { "id": 9,  "x": 20, "y": 26, "w": 9,  "h": 7, "hasEnemy": true },
     { "id": 10, "x": 35, "y": 25, "w": 8,  "h": 7  },
     { "id": 11, "x": 44, "y": 27, "w": 8,  "h": 8, "hasTreasureRoom": true }
   ],
@@ -38,6 +38,9 @@
     { "from": 8,  "to": 9  },
     { "from": 9,  "to": 10 },
     { "from": 10, "to": 11 }
+  ],
+  "hiddenWalls": [
+    [8, 18], [15, 20], [32, 16], [50, 30]
   ],
   "clues": [
     {
