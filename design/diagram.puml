@@ -26,6 +26,28 @@ package "Enums" {
     Left
     Right
   }
+
+  enum AnimationState {
+    Idle
+    MovingUp
+    MovingDown
+    MovingLeft
+    MovingRight
+    Dying
+  }
+
+  enum CellType {
+    Empty
+    Wall
+    TriggerWall
+    HiddenWall
+    Coin
+    TreasureRoom
+    ClueTrigger
+    Player
+    Corridor
+    Chamber
+  }
 }
 
 package "Core" {
@@ -36,6 +58,26 @@ package "Core" {
     {abstract} + draw(painter, cellSize)
   }
 
+  class Chamber <<struct>> {
+    + id : int
+    + x : int
+    + y : int
+    + width : int
+    + height : int
+    + coinPositions : QVector<QPoint>
+    + hasEnemy : bool
+    + enemyPos : QPoint
+    + hasTreasureRoom : bool
+    + treasurePos : QPoint
+    + centre() : QPoint
+  }
+
+  class InteractionResult <<struct>> {
+    + blocked : bool
+    + message : QString
+    + reason : QString
+  }
+
   class Level {
     - m_name : QString
     - m_width : int
@@ -43,7 +85,10 @@ package "Core" {
     - m_timeLimit : int
     - m_spawnX : int
     - m_spawnY : int
+    - m_chambers : QVector<Chamber>
     + isWalkable(x, y) : bool
+    + canPlayerEnter(x, y, player, outReason) : bool
+    + interactAt(x, y, player, clues) : InteractionResult
   }
 
   class Game {
@@ -53,14 +98,43 @@ package "Core" {
     - m_timeRemaining : int
     - m_currentLevelIndex : int
     + startNewGame(diff)
+    + startLevel(levelIndex, diff)
+    + restartLevel()
+    + nextLevel()
+    + saveGame(filepath)
+    + loadGame(filepath) : bool
     + handleInput(dir)
     + pause()
     + resume()
   }
+
+  class AIHelper {
+    + generateHint(level, player) : QString
+  }
 }
 
 package "Gameplay" {
-  class Player
+  class Player {
+    - m_coinsCollected : int
+    - m_isMoving : bool
+    + updateMovement(dt)
+    + move(dir, level)
+    + advanceAnimation()
+  }
+
+  class PlayerAnimator {
+    + advance()
+  }
+
+  class Enemy {
+    - m_animState : AnimationState
+    - m_animFrame : int
+    + update(level, player)
+    + advanceAnimation()
+    + setDying()
+    + isDead() : bool
+  }
+
   class Coin
   class Wall
   class TriggerWall
@@ -84,16 +158,25 @@ package "Systems" {
   class InputHandler {
     + keyToDirection(qtKey) : Direction
   }
+
+  class SpriteManager {
+    + load(key, filePath)
+    + drawWall(wall, p, cellSize) : bool
+    + drawPlayer(player, p, cellSize) : bool
+    + drawEnemy(enemy, p, cellSize) : bool
+  }
 }
 
 package "UI" {
   class MainMenu
   class GameWindow
+  class GameScreen
   class PauseOverlay
   class GameOverOverlay
 }
 
 GameObject <|-- Player
+GameObject <|-- Enemy
 GameObject <|-- Coin
 GameObject <|-- Wall
 Wall <|-- TriggerWall
@@ -101,14 +184,21 @@ Wall <|-- HiddenWall
 GameObject <|-- TreasureRoom
 GameObject <|-- ClueTrigger
 
+Player *-- PlayerAnimator
+Player ..> SpriteManager
+Enemy ..> SpriteManager
+
 GameWindow *-- Game
 Game *-- Level
 Game *-- Player
+Game *-- AIHelper
 Game ..> ClueManager
 Game ..> LevelLoader
 Game ..> GameState
 Game ..> Difficulty
 
+Level *-- Chamber
+Level *-- Enemy
 Level *-- Coin
 Level *-- Wall
 Level *-- TriggerWall
@@ -119,4 +209,3 @@ Level *-- ClueTrigger
 InputHandler ..> Direction
 
 @enduml
-
