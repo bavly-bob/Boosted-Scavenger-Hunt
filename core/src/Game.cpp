@@ -319,10 +319,7 @@ void Game::onTick()
         return;
     }
 
-    // Advance animations and logic
-    if (m_player) {
-        m_player->advanceAnimation();
-    }
+    // Advance enemy logic (enemy animation is also ticked by the render timer)
     if (m_currentLevel) {
         for (Enemy* enemy : m_currentLevel->getEnemies()) {
             enemy->advanceAnimation();

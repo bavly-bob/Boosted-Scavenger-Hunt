@@ -340,6 +340,8 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         const int x = xy.at(0).toInt();
         const int y = xy.at(1).toInt();
         if (level->isInBounds(x, y)) {
+            level->setTileAt(x, y, static_cast<int>(CellType::HiddenWall));
+            level->setCollisionAt(x, y, true);
             level->addHiddenWall(new HiddenWall(x, y));
         }
     }
@@ -361,6 +363,8 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
         }
         
         if (level->isInBounds(x, y) && !opens.isEmpty()) {
+            level->setTileAt(x, y, static_cast<int>(CellType::Wall));
+            level->setCollisionAt(x, y, true);
             level->addTriggerWall(new TriggerWall(x, y, opens));
         }
     }

@@ -113,7 +113,8 @@ bool SpriteManager::drawPlayer(const Player& player, QPainter& p, int cellSize) 
 
     const int frame = player.animFrame() % c->frameCount;
     const QRect srcRect(frame * c->frameWidth, c->srcY, c->frameWidth, c->frameHeight);
-    const QRect dstRect(player.getX() * cellSize, player.getY() * cellSize, cellSize, cellSize);
+    QRect dstRect(player.getX() * cellSize, player.getY() * cellSize, cellSize, cellSize);
+    dstRect.adjust(-4, -4, 4, 4); // slightly larger, overlapping edges
     p.drawPixmap(dstRect, sheet, srcRect);
     return true;
 }

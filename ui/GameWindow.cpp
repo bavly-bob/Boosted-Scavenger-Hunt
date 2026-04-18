@@ -137,7 +137,7 @@ GameWindow::GameWindow(QWidget *parent)
         if (m_game->state() == GameState::PLAYING) {
             const Player* p = m_game->player();
             if (p) {
-                const_cast<Player*>(p)->updateMovement(m_deltaMs / 1000.0f, TILE_SIZE);
+                const_cast<Player*>(p)->updateMovement(m_deltaMs / 1000.0f);
                 const_cast<Player*>(p)->advanceAnimation();
             }
         }
@@ -222,7 +222,15 @@ void GameWindow::loadAssets()
     // Load player sprite sheet (128×160 → 5 rows × 4 frames of 32×32).
     const QString playerSheet = assetsDir + "/player_sprites.png";
     if (QFile::exists(playerSheet)) {
-        m_spriteManager.load("player_sheet", playerSheet);
+        QImage playerImg(playerSheet);
+        if (!playerImg.isNull()) {
+            QColor bgColor = playerImg.pixelColor(0, 0);
+            QPixmap fullPix = QPixmap::fromImage(playerImg);
+            fullPix.setMask(fullPix.createMaskFromColor(bgColor, Qt::MaskOutColor));
+            m_spriteManager.loadPixmap("player_sheet", fullPix);
+        } else {
+            m_spriteManager.load("player_sheet", playerSheet);
+        }
         const QPixmap& px = m_spriteManager.sprite("player_sheet");
 
         // Auto-detect cell size: sheet is 5 rows x 4 columns
@@ -253,7 +261,15 @@ void GameWindow::loadAssets()
 
     const QString enemySheet = assetsDir + "/enemy_sprites.png";
     if (QFile::exists(enemySheet)) {
-        m_spriteManager.load("enemy_sheet", enemySheet);
+        QImage enemyImg(enemySheet);
+        if (!enemyImg.isNull()) {
+            QColor bgColor = enemyImg.pixelColor(0, 0);
+            QPixmap fullPix = QPixmap::fromImage(enemyImg);
+            fullPix.setMask(fullPix.createMaskFromColor(bgColor, Qt::MaskOutColor));
+            m_spriteManager.loadPixmap("enemy_sheet", fullPix);
+        } else {
+            m_spriteManager.load("enemy_sheet", enemySheet);
+        }
         const QPixmap& ex = m_spriteManager.sprite("enemy_sheet");
 
         const int ROWS = 6, COLS = 4;
