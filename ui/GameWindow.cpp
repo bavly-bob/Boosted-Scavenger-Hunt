@@ -87,12 +87,15 @@ void drawTileBorder(QPainter& p, const QRect& cell, CellType ct)
 {
     switch (ct) {
     case CellType::Chamber:
-        p.setPen(QPen(QColor(35, 28, 22, 80), 1));
-        p.drawRect(cell);
+        // Subtle grout lines to create stone-floor tile grid feel
+        p.setPen(QPen(QColor(30, 22, 16, 70), 1));
+        p.drawLine(cell.topLeft(), cell.topRight());
+        p.drawLine(cell.topLeft(), cell.bottomLeft());
         break;
     case CellType::Corridor:
-        p.setPen(QPen(QColor(20, 16, 12, 100), 1));
-        p.drawRect(cell);
+        p.setPen(QPen(QColor(18, 14, 10, 90), 1));
+        p.drawLine(cell.topLeft(), cell.topRight());
+        p.drawLine(cell.topLeft(), cell.bottomLeft());
         break;
     default:
         break;
@@ -115,6 +118,8 @@ GameWindow::GameWindow(QWidget *parent)
 {
     setWindowTitle("Scavenger Hunt");
     setFocusPolicy(Qt::StrongFocus);
+    m_frameTimer.start();
+    m_deltaMs = 16.0f;
 
     m_pauseOverlay->hide();
     m_gameOverOverlay->hide();
@@ -126,7 +131,18 @@ GameWindow::GameWindow(QWidget *parent)
     connect(m_game, &Game::gameOver,          this, &GameWindow::onGameOver);
 
     m_renderTimer->setInterval(16);
-    connect(m_renderTimer, &QTimer::timeout, this, QOverload<>::of(&GameWindow::update));
+    connect(m_renderTimer, &QTimer::timeout, this, [this]() {
+        m_deltaMs = static_cast<float>(m_frameTimer.restart());
+        // Update smooth player movement each render tick
+        if (m_game->state() == GameState::PLAYING) {
+            const Player* p = m_game->player();
+            if (p) {
+                const_cast<Player*>(p)->updateMovement(m_deltaMs / 1000.0f, TILE_SIZE);
+                const_cast<Player*>(p)->advanceAnimation();
+            }
+        }
+        update();
+    });
     m_renderTimer->start();
 
     connect(m_pauseOverlay, &PauseOverlay::resumeRequested, this, [this]() {
@@ -207,41 +223,60 @@ void GameWindow::loadAssets()
     const QString playerSheet = assetsDir + "/player_sprites.png";
     if (QFile::exists(playerSheet)) {
         m_spriteManager.load("player_sheet", playerSheet);
+        const QPixmap& px = m_spriteManager.sprite("player_sheet");
 
-        // Register animation clips — each row in the sheet is one state.
-        const QStringList clipNames = {
-            "player_idle", "player_move_down", "player_move_up",
-            "player_move_left", "player_move_right"
+        // Auto-detect cell size: sheet is 5 rows x 4 columns
+        const int ROWS = 5, COLS = 4;
+        const int fw = px.isNull() ? 32 : px.width()  / COLS;
+        const int fh = px.isNull() ? 32 : px.height() / ROWS;
+
+        // Row layout (matches reference image):
+        //  0 = walk down, 1 = walk up, 2 = walk left, 3 = walk right, 4 = idle/alt
+        const struct { const char* name; int row; } playerClips[] = {
+            { "player_move_down",  0 },
+            { "player_move_up",    1 },
+            { "player_move_left",  2 },
+            { "player_move_right", 3 },
+            { "player_idle",       4 },
         };
-        for (int row = 0; row < clipNames.size(); ++row) {
+        for (const auto& entry : playerClips) {
             AnimationClip c;
             c.spriteKey   = "player_sheet";
-            c.frameCount  = 4;
-            c.frameWidth  = 32;
-            c.frameHeight = 32;
-            c.srcY        = row * 32;
+            c.frameCount  = COLS;
+            c.frameWidth  = fw;
+            c.frameHeight = fh;
+            c.srcY        = entry.row * fh;
             c.fps         = 8;
-            m_spriteManager.registerClip(clipNames[row], c);
+            m_spriteManager.registerClip(QString(entry.name), c);
         }
     }
 
     const QString enemySheet = assetsDir + "/enemy_sprites.png";
     if (QFile::exists(enemySheet)) {
         m_spriteManager.load("enemy_sheet", enemySheet);
+        const QPixmap& ex = m_spriteManager.sprite("enemy_sheet");
 
-        const QStringList enemyClipNames = {
-            "enemy_idle", "enemy_move_down", "enemy_move_up",
-            "enemy_move_left", "enemy_move_right", "enemy_die"
+        const int ROWS = 6, COLS = 4;
+        const int fw = ex.isNull() ? 32 : ex.width()  / COLS;
+        const int fh = ex.isNull() ? 32 : ex.height() / ROWS;
+
+        const struct { const char* name; int row; } enemyClips[] = {
+            { "enemy_idle",        0 },
+            { "enemy_move_down",   1 },
+            { "enemy_move_up",     2 },
+            { "enemy_move_left",   3 },
+            { "enemy_move_right",  4 },
+            { "enemy_die",         5 },
         };
-        for (int row = 0; row < enemyClipNames.size(); ++row) {
+        for (const auto& entry : enemyClips) {
             AnimationClip c;
             c.spriteKey   = "enemy_sheet";
-            c.frameCount  = 4;
-            c.frameWidth  = 32;
-            c.frameHeight = 32;
-            c.srcY        = row * 32;
+            c.frameCount  = COLS;
+            c.frameWidth  = fw;
+            c.frameHeight = fh;
+            c.srcY        = entry.row * fh;
             c.fps         = 8;
-            m_spriteManager.registerClip(enemyClipNames[row], c);
+            m_spriteManager.registerClip(QString(entry.name), c);
         }
     }
 }
@@ -487,26 +522,57 @@ void GameWindow::paintEvent(QPaintEvent *event)
             const CellType ct = static_cast<CellType>(level->tileAt(x, y));
 
             if (ct == CellType::Wall || ct == CellType::HiddenWall) {
-                // Draw wall tiles directly (no Wall object required in chamber format).
-                static const QColor wallColors[] = {
-                    QColor(62, 62, 72),  // default stone
-                    QColor(48, 68, 48),  // mossy
-                    QColor(80, 60, 44),  // brown brick
-                    QColor(44, 44, 66),  // slate
+                // ── Pixel-art style stone wall ─────────────────────────────
+                // 3 colour variants for natural variation
+                static const QColor wallBase[] = {
+                    QColor(55, 52, 60),   // dark slate
+                    QColor(48, 56, 44),   // mossy stone
+                    QColor(70, 56, 42),   // brown brick
                 };
-                // Use a deterministic variant per tile position for variety.
-                const QColor base = wallColors[((x * 3 + y * 7) & 0xFF) % 4];
-                p.fillRect(cell, base);
-                p.setPen(QPen(base.lighter(130), 1));
-                p.drawLine(cell.topLeft(),   cell.topRight());
-                p.drawLine(cell.topLeft(),   cell.bottomLeft());
-                p.setPen(QPen(base.darker(155), 1));
-                p.drawLine(cell.bottomLeft(),  cell.bottomRight());
-                p.drawLine(cell.topRight(),    cell.bottomRight());
-                // Horizontal mortar line
-                p.setPen(QPen(base.darker(125), 1));
+                const int variant = ((x * 7 + y * 3) & 0xFF) % 3;
+                const QColor base = wallBase[variant];
+                const QColor light = base.lighter(145);
+                const QColor dark  = base.darker(165);
+                const QColor mortar(20, 18, 16);
+
+                // Face fill with slight top-to-bottom gradient
+                QLinearGradient faceGrad(cell.topLeft(), cell.bottomLeft());
+                faceGrad.setColorAt(0.0, base.lighter(115));
+                faceGrad.setColorAt(0.5, base);
+                faceGrad.setColorAt(1.0, base.darker(130));
+                p.fillRect(cell, faceGrad);
+
+                // Top highlight — simulates top-lit 3D depth
+                p.setPen(QPen(light, 2));
+                p.drawLine(cell.topLeft(), cell.topRight());
+
+                // Left highlight
+                p.setPen(QPen(light.darker(110), 1));
+                p.drawLine(cell.topLeft(), cell.bottomLeft());
+
+                // Bottom shadow
+                p.setPen(QPen(dark, 2));
+                p.drawLine(cell.bottomLeft(), cell.bottomRight());
+
+                // Right shadow
+                p.setPen(QPen(dark.lighter(110), 1));
+                p.drawLine(cell.topRight(), cell.bottomRight());
+
+                // Horizontal mortar line at mid-height
+                p.setPen(QPen(mortar, 1));
                 const int halfH = cell.top() + TILE_SIZE / 2;
-                p.drawLine(cell.left() + 1, halfH, cell.right() - 1, halfH);
+                p.drawLine(cell.left() + 2, halfH, cell.right() - 2, halfH);
+
+                // Vertical mortar lines (offset per row for brick stagger)
+                const int offset = (y % 2 == 0) ? TILE_SIZE / 4 : 3 * TILE_SIZE / 4;
+                const int vx = cell.left() + offset;
+                if (vx > cell.left() && vx < cell.right()) {
+                    p.drawLine(vx, cell.top() + 2, vx, halfH - 2);
+                }
+                const int vx2 = cell.left() + ((offset + TILE_SIZE / 2) % TILE_SIZE);
+                if (vx2 > cell.left() && vx2 < cell.right()) {
+                    p.drawLine(vx2, halfH + 2, vx2, cell.bottom() - 2);
+                }
                 continue;
             }
 
@@ -527,6 +593,15 @@ void GameWindow::paintEvent(QPaintEvent *event)
             obj->draw(p, TILE_SIZE);
         }
     }
+    // Draw enemies
+    for (Enemy* enemy : level->getEnemies()) {
+        if (!enemy) continue;
+        const int ox = enemy->getX(), oy = enemy->getY();
+        if (ox >= startX && ox <= endX && oy >= startY && oy <= endY) {
+            enemy->draw(p, TILE_SIZE);
+        }
+    }
+    // Draw player at smooth sub-tile pixel position
     player->draw(p, TILE_SIZE);
     p.restore();
 

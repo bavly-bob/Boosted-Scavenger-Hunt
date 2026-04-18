@@ -27,7 +27,8 @@ enum class AnimationState {
     MovingUp,
     MovingDown,
     MovingLeft,
-    MovingRight
+    MovingRight,
+    Dying
 };
 
 enum class CellType {

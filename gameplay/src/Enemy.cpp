@@ -23,32 +23,51 @@ QString Enemy::getType() const
 
 void Enemy::draw(QPainter& painter, int cellSize) const
 {
-    if (m_sprites) {
-        QString clipName = "enemy_idle";
-        switch (m_animState) {
-        case AnimationState::MovingUp:    clipName = "enemy_move_up";    break;
-        case AnimationState::MovingDown:  clipName = "enemy_move_down";  break;
-        case AnimationState::MovingLeft:  clipName = "enemy_move_left";  break;
-        case AnimationState::MovingRight: clipName = "enemy_move_right"; break;
-        case AnimationState::Dying:       clipName = "enemy_die";        break;
-        default:                          clipName = "enemy_idle";       break;
-        }
-
-        QRect destRect(m_x * cellSize, m_y * cellSize, cellSize, cellSize);
-        
-        // Draw slightly larger so it overlaps the tile boundary
-        destRect.adjust(-4, -4, 4, 4);
-
-        if (m_sprites->hasClip(clipName)) {
-            m_sprites->drawFrame(painter, clipName, m_animFrame, destRect);
-            return;
-        }
+    if (m_sprites && m_sprites->drawEnemy(*this, painter, cellSize)) {
+        return;
     }
 
-    // Fallback drawing
-    painter.setBrush(QColor(200, 50, 50));
+    // ── Pixel-art skull fallback ─────────────────────────────────────────────
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, false); // crisp pixels
+
+    const int x = m_x * cellSize;
+    const int y = m_y * cellSize;
+    const int s = cellSize;
+    const int m = s / 8; // margin
+
+    // Body (dark purple/grey base)
     painter.setPen(Qt::NoPen);
-    painter.drawEllipse(m_x * cellSize + 4, m_y * cellSize + 4, cellSize - 8, cellSize - 8);
+    painter.setBrush(QColor(60, 30, 80));
+    painter.drawEllipse(x + m, y + m, s - 2*m, s - 2*m);
+
+    // Glowing red eyes
+    const int eyeR = qMax(2, s / 10);
+    const int eyeY = y + s * 3 / 8;
+    // Left eye glow
+    painter.setBrush(QColor(255, 30, 30, 80));
+    painter.drawEllipse(x + s/4 - eyeR - 1, eyeY - eyeR - 1, eyeR*2+2, eyeR*2+2);
+    // Right eye glow
+    painter.drawEllipse(x + 3*s/4 - eyeR - 1, eyeY - eyeR - 1, eyeR*2+2, eyeR*2+2);
+    // Left eye
+    painter.setBrush(QColor(255, 60, 60));
+    painter.drawEllipse(x + s/4 - eyeR, eyeY - eyeR, eyeR*2, eyeR*2);
+    // Right eye
+    painter.drawEllipse(x + 3*s/4 - eyeR, eyeY - eyeR, eyeR*2, eyeR*2);
+
+    // Rim outline
+    painter.setPen(QPen(QColor(120, 60, 160), 1));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(x + m, y + m, s - 2*m, s - 2*m);
+
+    // Death indicator when dying
+    if (isDead()) {
+        painter.setPen(QPen(QColor(255, 255, 255, 120), 2));
+        painter.drawLine(x + m, y + m, x + s - m, y + s - m);
+        painter.drawLine(x + s - m, y + m, x + m, y + s - m);
+    }
+
+    painter.restore();
 }
 
 void Enemy::update(Level& level, const Player& player)
@@ -117,17 +136,17 @@ void Enemy::advanceAnimation()
     default:                          clipName = "enemy_idle";       break;
     }
 
-    if (m_sprites->hasClip(clipName)) {
-        const AnimationClip& clip = m_sprites->getClip(clipName);
-        if (clip.fps > 0) {
-            const int ticksPerFrame = qMax(1, 60 / clip.fps);
+    const AnimationClip* clip = m_sprites->clip(clipName);
+    if (clip) {
+        if (clip->fps > 0) {
+            const int ticksPerFrame = qMax(1, 60 / clip->fps);
             if (++m_animTick >= ticksPerFrame) {
                 m_animTick = 0;
                 m_animFrame++;
-                if (m_animState == AnimationState::Dying && m_animFrame >= clip.frameCount) {
-                    m_animFrame = clip.frameCount - 1; // Stop at last frame of dying
+                if (m_animState == AnimationState::Dying && m_animFrame >= clip->frameCount) {
+                    m_animFrame = clip->frameCount - 1; // Stop at last frame of dying
                 } else {
-                    m_animFrame %= clip.frameCount;
+                    m_animFrame %= clip->frameCount;
                 }
             }
         }

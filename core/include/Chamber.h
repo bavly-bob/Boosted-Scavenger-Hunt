@@ -15,6 +15,9 @@ struct Chamber {
     // Absolute tile positions of coins placed inside this chamber.
     QVector<QPoint> coinPositions;
 
+    bool hasEnemy = false;
+    QPoint enemyPos;
+
     bool hasTreasureRoom = false;
     QPoint treasurePos;
 
@@ -28,4 +31,5 @@ struct Chamber {
     {
         return width > 0 && height > 0;
     }
+    
 };

@@ -4,6 +4,7 @@
 #include "Enums.h"
 #include "SpriteManager.h"
 
+#include <QElapsedTimer>
 #include <QPointF>
 #include <QWidget>
 
@@ -55,6 +56,8 @@ private:
     QPointF           m_cameraPx;
     QVector<QVector<bool>> m_explored;
     SpriteManager     m_spriteManager;
+    QElapsedTimer     m_frameTimer;
+    float             m_deltaMs;
 
     QString  m_statusText;
     bool     m_levelsConfigured;

@@ -28,6 +28,9 @@ public:
     void advanceAnimation();
     void setSpriteManager(const SpriteManager* sm);
     
+    AnimationState animState() const { return m_animState; }
+    int animFrame() const { return m_animFrame; }
+    
     void setDying();
     bool isDead() const;
 };

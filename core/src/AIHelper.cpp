@@ -74,7 +74,7 @@ void AIHelper::rephrase(const QString& text, std::function<void(QString)> callba
     body["messages"] = messages;
     body["max_tokens"] = 80;
 
-    QNetworkRequest req(QUrl(m_apiUrl));
+    QNetworkRequest req{QUrl(m_apiUrl)};
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     req.setRawHeader("Authorization", QStringLiteral("Bearer ").append(m_apiKey).toUtf8());
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Enums.h"
+#include "Enemy.h"  
 
 #include <QHash>
 #include <QPixmap>
@@ -20,6 +21,7 @@ struct AnimationClip {
     int     frameCount;  // total frames in the strip
     int     frameWidth;  // px width of one frame
     int     frameHeight; // px height of one frame
+    int     srcY;        // Y offset in the sprite sheet
     int     fps;         // logical frames per second (used by advanceAnimation)
 };
 
@@ -52,6 +54,9 @@ public:
 
     // Renders the player at its grid position using the correct animation frame.
     bool drawPlayer(const Player& player, QPainter& p, int cellSize) const;
+
+    // Renders an enemy at its grid position using the correct animation frame.
+    bool drawEnemy(const Enemy& enemy, QPainter& p, int cellSize) const;
 
 private:
     mutable QHash<QString, QPixmap>       m_cache;

@@ -1,5 +1,9 @@
 #include "ClueTrigger.h"
 
+#include <QPainter>
+#include <QRect>
+#include <QFont>
+
 ClueTrigger::ClueTrigger(int x, int y, const QString& text)
     : GameObject(x, y),
       m_clueText(text),
@@ -12,9 +16,18 @@ QString ClueTrigger::getType() const
     return "ClueTrigger";
 }
 
-void ClueTrigger::draw(QPainter&, int) const
+void ClueTrigger::draw(QPainter& painter, int tileSize) const
 {
-    // Intentionally invisible.
+    // instead of nothing, draw a question mark icon
+    // if the clue is activated, do not draw the question mark icon
+    if (!m_activated) {
+        painter.save();
+        QRect rect(m_x * tileSize, m_y * tileSize, tileSize, tileSize);
+        painter.setFont(QFont("Arial", tileSize / 2, QFont::Bold));
+        painter.setPen(Qt::yellow);
+        painter.drawText(rect, Qt::AlignCenter, "?");
+        painter.restore();
+    }
 }
 
 void ClueTrigger::activate()

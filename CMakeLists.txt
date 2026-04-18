@@ -30,6 +30,7 @@ set(PROJECT_SOURCES
         core/include/GameObject.h core/src/GameObject.cpp
         core/include/Level.h core/src/Level.cpp
         gameplay/include/Player.h gameplay/src/Player.cpp
+        gameplay/include/Enemy.h gameplay/src/Enemy.cpp
         gameplay/include/Coin.h gameplay/src/Coin.cpp
         gameplay/include/Wall.h gameplay/src/Wall.cpp
         gameplay/include/TriggerWall.h gameplay/src/TriggerWall.cpp

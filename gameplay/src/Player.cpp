@@ -4,16 +4,24 @@
 #include "SpriteManager.h"
 
 #include <QPainter>
+#include <cmath>
 
-// Ticks (game-loop iterations) per animation frame when no clip is registered.
-static constexpr int DEFAULT_ANIM_TICKS = 2;
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Constructor
+// ─────────────────────────────────────────────────────────────────────────────
 Player::Player(int x, int y)
     : GameObject(x, y),
       m_coinsCollected(0),
+      m_targetX(x),
+      m_targetY(y),
+      m_pixelX(static_cast<float>(x)),
+      m_pixelY(static_cast<float>(y)),
+      m_isMoving(false),
+      m_moveProgress(1.0f),
       m_animState(AnimationState::Idle),
       m_animFrame(0),
-      m_animTick(DEFAULT_ANIM_TICKS),
+      m_animTick(ANIM_TICKS_PER_FRAME),
+      m_lastDir(AnimationState::MovingDown),
       m_sprites(nullptr)
 {
 }
@@ -23,15 +31,44 @@ QString Player::getType() const
     return "Player";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// draw — uses sub-tile pixel position for smooth rendering
+// ─────────────────────────────────────────────────────────────────────────────
 void Player::draw(QPainter& painter, int cellSize) const
 {
-    // Attempt sprite-based rendering via SpriteManager.
-    if (m_sprites && m_sprites->drawPlayer(*this, painter, cellSize)) {
-        return;
+    // Pixel coords in tile-space units (converted to actual px by caller via translate)
+    const int px = static_cast<int>(std::round(m_pixelX * cellSize));
+    const int py = static_cast<int>(std::round(m_pixelY * cellSize));
+
+    // Attempt sprite-based rendering
+    if (m_sprites) {
+        // Determine which clip to use
+        AnimationState drawState = (m_animState == AnimationState::Idle) ? m_lastDir : m_animState;
+        QString clipName;
+        switch (drawState) {
+        case AnimationState::MovingUp:    clipName = "player_move_up";    break;
+        case AnimationState::MovingDown:  clipName = "player_move_down";  break;
+        case AnimationState::MovingLeft:  clipName = "player_move_left";  break;
+        case AnimationState::MovingRight: clipName = "player_move_right"; break;
+        default:                          clipName = "player_move_down";  break;
+        }
+
+        const AnimationClip* c = m_sprites->clip(clipName);
+        if (c) {
+            const QPixmap& sheet = m_sprites->sprite(c->spriteKey);
+            if (!sheet.isNull()) {
+                // When idle, always show frame 0; when moving, use m_animFrame
+                const int frame = (m_animState == AnimationState::Idle) ? 0 : (m_animFrame % c->frameCount);
+                const QRect srcRect(frame * c->frameWidth, c->srcY, c->frameWidth, c->frameHeight);
+                const QRect dstRect(px, py, cellSize, cellSize);
+                painter.drawPixmap(dstRect, sheet, srcRect);
+                return;
+            }
+        }
     }
 
     // ── Procedural fallback ──────────────────────────────────────────────────
-    const QRect cellRect(m_x * cellSize, m_y * cellSize, cellSize, cellSize);
+    const QRect cellRect(px, py, cellSize, cellSize);
     const int margin = cellSize / 6;
     const QRect body = cellRect.adjusted(margin, margin, -margin, -margin);
 
@@ -60,7 +97,7 @@ void Player::draw(QPainter& painter, int cellSize) const
     const QPoint centre = body.center();
     const int dotR = cellSize / 8;
     QPoint dotOffset;
-    switch (m_animState) {
+    switch (m_lastDir) {
     case AnimationState::MovingUp:    dotOffset = QPoint(0, -cellSize / 6); break;
     case AnimationState::MovingDown:  dotOffset = QPoint(0,  cellSize / 6); break;
     case AnimationState::MovingLeft:  dotOffset = QPoint(-cellSize / 6, 0); break;
@@ -74,10 +111,36 @@ void Player::draw(QPainter& painter, int cellSize) const
     painter.restore();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// updateMovement — called each render frame with delta time in seconds
+// ─────────────────────────────────────────────────────────────────────────────
+void Player::updateMovement(float dt, int tileSize)
+{
+    Q_UNUSED(tileSize);
+    if (!m_isMoving) return;
+
+    m_moveProgress += MOVE_SPEED * dt;
+    if (m_moveProgress >= 1.0f) {
+        m_moveProgress = 1.0f;
+        m_pixelX = static_cast<float>(m_targetX);
+        m_pixelY = static_cast<float>(m_targetY);
+        m_isMoving = false;
+    } else {
+        // Lerp from previous logical position toward target
+        const float startX = static_cast<float>(m_x);
+        const float startY = static_cast<float>(m_y);
+        m_pixelX = startX + (static_cast<float>(m_targetX) - startX) * m_moveProgress;
+        m_pixelY = startY + (static_cast<float>(m_targetY) - startY) * m_moveProgress;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// move — initiates movement to adjacent tile
+// ─────────────────────────────────────────────────────────────────────────────
 void Player::move(Direction dir, const Level& level)
 {
-    int newX = m_x;
-    int newY = m_y;
+    int newX = m_targetX;
+    int newY = m_targetY;
 
     switch (dir) {
     case Direction::None:
@@ -85,18 +148,22 @@ void Player::move(Direction dir, const Level& level)
     case Direction::Up:
         newY -= 1;
         m_animState = AnimationState::MovingUp;
+        m_lastDir   = AnimationState::MovingUp;
         break;
     case Direction::Down:
         newY += 1;
         m_animState = AnimationState::MovingDown;
+        m_lastDir   = AnimationState::MovingDown;
         break;
     case Direction::Left:
         newX -= 1;
         m_animState = AnimationState::MovingLeft;
+        m_lastDir   = AnimationState::MovingLeft;
         break;
     case Direction::Right:
         newX += 1;
         m_animState = AnimationState::MovingRight;
+        m_lastDir   = AnimationState::MovingRight;
         break;
     }
 
@@ -105,9 +172,18 @@ void Player::move(Direction dir, const Level& level)
         return;
     }
 
+    // Update logical position immediately (for collision/interaction logic)
     setPosition(newX, newY);
+
+    // Set up smooth interpolation: slide from current pixel pos to new tile
+    m_targetX = newX;
+    m_targetY = newY;
+    m_isMoving = true;
+    m_moveProgress = 0.0f;
+
+    // Reset animation frame at start of new step
     m_animFrame = 0;
-    m_animTick  = DEFAULT_ANIM_TICKS;
+    m_animTick  = ANIM_TICKS_PER_FRAME;
 }
 
 void Player::collectCoin()
@@ -125,6 +201,11 @@ bool Player::canEnterTreasureRoom() const
     return m_coinsCollected >= 3;
 }
 
+bool Player::isAtTarget() const
+{
+    return !m_isMoving;
+}
+
 AnimationState Player::animState() const
 {
     return m_animState;
@@ -135,6 +216,9 @@ int Player::animFrame() const
     return m_animFrame;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// advanceAnimation — called each render tick (16 ms)
+// ─────────────────────────────────────────────────────────────────────────────
 void Player::advanceAnimation()
 {
     if (m_animState == AnimationState::Idle) {
@@ -142,30 +226,33 @@ void Player::advanceAnimation()
         return;
     }
 
-    // Determine clip length (or use default).
-    int clipLen = 4; // default frames for moving
+    if (!m_isMoving) {
+        // We arrived at the tile — go back to idle
+        m_animState = AnimationState::Idle;
+        m_animFrame = 0;
+        return;
+    }
+
+    // Determine clip length
+    int clipLen = 4;
     if (m_sprites) {
-        const QString clipName = [this]() -> QString {
-            switch (m_animState) {
-            case AnimationState::MovingUp:    return "player_move_up";
-            case AnimationState::MovingDown:  return "player_move_down";
-            case AnimationState::MovingLeft:  return "player_move_left";
-            case AnimationState::MovingRight: return "player_move_right";
-            default:                          return "player_idle";
-            }
-        }();
+        AnimationState drawState = (m_animState == AnimationState::Idle) ? m_lastDir : m_animState;
+        QString clipName;
+        switch (drawState) {
+        case AnimationState::MovingUp:    clipName = "player_move_up";    break;
+        case AnimationState::MovingDown:  clipName = "player_move_down";  break;
+        case AnimationState::MovingLeft:  clipName = "player_move_left";  break;
+        case AnimationState::MovingRight: clipName = "player_move_right"; break;
+        default:                          clipName = "player_move_down";  break;
+        }
         if (const AnimationClip* c = m_sprites->clip(clipName)) {
             clipLen = c->frameCount;
         }
     }
 
     if (--m_animTick <= 0) {
-        m_animTick = DEFAULT_ANIM_TICKS;
+        m_animTick  = ANIM_TICKS_PER_FRAME;
         m_animFrame = (m_animFrame + 1) % clipLen;
-        // After one full cycle, return to idle.
-        if (m_animFrame == 0) {
-            m_animState = AnimationState::Idle;
-        }
     }
 }
 

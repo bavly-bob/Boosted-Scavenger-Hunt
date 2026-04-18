@@ -2,6 +2,7 @@
 
 #include "Player.h"
 #include "Wall.h"
+#include "Enemy.h"
 
 #include <QPainter>
 #include <QRect>
@@ -111,8 +112,38 @@ bool SpriteManager::drawPlayer(const Player& player, QPainter& p, int cellSize) 
     }
 
     const int frame = player.animFrame() % c->frameCount;
-    const QRect srcRect(frame * c->frameWidth, 0, c->frameWidth, c->frameHeight);
+    const QRect srcRect(frame * c->frameWidth, c->srcY, c->frameWidth, c->frameHeight);
     const QRect dstRect(player.getX() * cellSize, player.getY() * cellSize, cellSize, cellSize);
+    p.drawPixmap(dstRect, sheet, srcRect);
+    return true;
+}
+
+bool SpriteManager::drawEnemy(const Enemy& enemy, QPainter& p, int cellSize) const
+{
+    QString cName = "enemy_idle";
+    switch (enemy.animState()) {
+    case AnimationState::MovingUp:    cName = "enemy_move_up";    break;
+    case AnimationState::MovingDown:  cName = "enemy_move_down";  break;
+    case AnimationState::MovingLeft:  cName = "enemy_move_left";  break;
+    case AnimationState::MovingRight: cName = "enemy_move_right"; break;
+    case AnimationState::Dying:       cName = "enemy_die";        break;
+    default:                          cName = "enemy_idle";       break;
+    }
+
+    const AnimationClip* c = clip(cName);
+    if (!c) {
+        return false;
+    }
+
+    const QPixmap& sheet = sprite(c->spriteKey);
+    if (sheet.isNull()) {
+        return false;
+    }
+
+    const int frame = enemy.animFrame() % c->frameCount;
+    const QRect srcRect(frame * c->frameWidth, c->srcY, c->frameWidth, c->frameHeight);
+    QRect dstRect(enemy.getX() * cellSize, enemy.getY() * cellSize, cellSize, cellSize);
+    dstRect.adjust(-4, -4, 4, 4); // slightly larger
     p.drawPixmap(dstRect, sheet, srcRect);
     return true;
 }
