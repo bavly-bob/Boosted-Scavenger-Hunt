@@ -13,6 +13,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRandomGenerator>
 
 namespace {
 int difficultyTimeOffsetSeconds(Difficulty difficulty)
@@ -36,6 +37,7 @@ Game::Game(QObject* parent)
       m_score(0),
       m_timeRemaining(0),
       m_currentLevelIndex(0),
+      m_runSeedBase(0),
       m_clueManager(std::make_unique<ClueManager>()),
     m_timer(new QTimer(this)),
     m_aiHelper(std::make_unique<AIHelper>(this))
@@ -59,6 +61,7 @@ int Game::levelCount() const
 void Game::startNewGame(Difficulty diff)
 {
     m_score = 0;
+    m_runSeedBase = QRandomGenerator::global()->generate();
     startLevel(0, diff);
 }
 
@@ -75,7 +78,25 @@ void Game::startLevel(int levelIndex, Difficulty diff)
     m_currentLevelIndex = levelIndex;
 
     QJsonArray clues;
-    m_currentLevel.reset(LevelLoader::loadFromJson(m_levelFiles.at(levelIndex), &clues));
+    if (m_difficulty == Difficulty::EASY) {
+        m_currentLevel.reset(LevelLoader::loadFromJson(m_levelFiles.at(levelIndex), &clues));
+    } else {
+        quint32 seed = m_runSeedBase;
+        seed ^= static_cast<quint32>(levelIndex + 1) * 0x9e3779b9u;
+        seed ^= static_cast<quint32>(m_difficulty == Difficulty::HARD ? 2 : 1) * 0x85ebca6bu;
+        const QString& anchor = m_levelFiles.at(levelIndex);
+        for (QChar ch : anchor) {
+            seed = seed * 33u + static_cast<quint32>(ch.unicode());
+        }
+
+        const int proceduralDifficulty = (m_difficulty == Difficulty::HARD) ? 2 : 1;
+        m_currentLevel.reset(LevelLoader::generateProcedural(static_cast<int>(seed), proceduralDifficulty, &clues));
+
+        // Fallback path if procedural generation fails for any reason.
+        if (!m_currentLevel) {
+            m_currentLevel.reset(LevelLoader::loadFromJson(m_levelFiles.at(levelIndex), &clues));
+        }
+    }
     m_clueManager->loadClues(clues);
 
     if (!m_currentLevel) {
@@ -117,6 +138,7 @@ void Game::saveGame(const QString& filepath)
     root["levelIndex"] = m_currentLevelIndex;
     root["difficulty"] = static_cast<int>(m_difficulty);
     root["score"] = m_score;
+    root["seedBase"] = static_cast<qint64>(m_runSeedBase);
 
     QJsonDocument doc(root);
     QFile file(filepath);
@@ -142,6 +164,10 @@ bool Game::loadGame(const QString& filepath)
     int levelIndex = root["levelIndex"].toInt(0);
     int diffInt = root["difficulty"].toInt(1);
     m_score = root["score"].toInt(0);
+    m_runSeedBase = static_cast<quint32>(root["seedBase"].toDouble(0.0));
+    if (m_runSeedBase == 0u) {
+        m_runSeedBase = QRandomGenerator::global()->generate();
+    }
 
     Difficulty diff = Difficulty::NORMAL;
     if (diffInt == 0) diff = Difficulty::EASY;

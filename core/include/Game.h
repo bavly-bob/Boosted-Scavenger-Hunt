@@ -6,6 +6,7 @@
 #include <QPoint>
 #include <QString>
 #include <QStringList>
+#include <QtGlobal>
 
 #include <memory>
 
@@ -24,6 +25,7 @@ class Game : public QObject {
     int m_score;
     int m_timeRemaining;
     int m_currentLevelIndex;
+    quint32 m_runSeedBase;
 
     QStringList m_levelFiles;
     std::unique_ptr<Level> m_currentLevel;
