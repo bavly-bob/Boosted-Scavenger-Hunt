@@ -2,17 +2,17 @@
 
 #include "Wall.h"
 
-#include <QPoint>
 #include <QVector>
 
 class QPainter;
 
 class TriggerWall : public Wall {
-    QVector<QPoint> m_opensPositions;
+    QVector<int> m_controlledWallIds;
     bool m_triggered;
+    int m_triggerId;
 
 public:
-    TriggerWall(int x, int y, const QVector<QPoint>& opens);
+    TriggerWall(int x, int y, int triggerId, const QVector<int>& controlledWallIds);
 
     QString getType() const override;
     void draw(QPainter& painter, int cellSize) const override;
@@ -20,5 +20,6 @@ public:
 
     void trigger();
     bool isTriggered() const;
-    QVector<QPoint> getOpensPositions() const;
+    QVector<int> controlledWallIds() const;
+    int triggerId() const;
 };

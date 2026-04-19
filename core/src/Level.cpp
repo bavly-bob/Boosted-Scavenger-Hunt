@@ -13,6 +13,8 @@
 #include "Wall.h"
 
 #include <QtAlgorithms>
+#include <QDebug>
+#include <algorithm>
 
 quint64 Level::posKey(int x, int y)
 {
@@ -156,6 +158,13 @@ void Level::addTriggerWall(TriggerWall* wall)
     addOwnedObject(wall);
     m_triggerWalls.push_back(wall);
     m_triggerWallByPos.insert(posKey(wall->getX(), wall->getY()), wall);
+    if (wall->triggerId() >= 0) {
+        if (m_triggerWallById.contains(wall->triggerId())) {
+            qWarning() << "Duplicate trigger ID detected:" << wall->triggerId()
+                       << "at" << wall->getX() << wall->getY();
+        }
+        m_triggerWallById.insert(wall->triggerId(), wall);
+    }
     setTileAndCollision(wall->getX(), wall->getY(), static_cast<int>(CellType::TriggerWall), false);
 }
 
@@ -164,6 +173,13 @@ void Level::addHiddenWall(HiddenWall* wall)
     addOwnedObject(wall);
     m_hiddenWalls.push_back(wall);
     m_hiddenWallByPos.insert(posKey(wall->getX(), wall->getY()), wall);
+    if (wall->wallId() >= 0) {
+        if (m_hiddenWallById.contains(wall->wallId())) {
+            qWarning() << "Duplicate hidden wall ID detected:" << wall->wallId()
+                       << "at" << wall->getX() << wall->getY();
+        }
+        m_hiddenWallById.insert(wall->wallId(), wall);
+    }
     setTileAndCollision(wall->getX(), wall->getY(), static_cast<int>(CellType::HiddenWall), wall->isBlocking());
 }
 
@@ -203,6 +219,16 @@ const QVector<Coin*>& Level::getCoins() const
 const QVector<Enemy*>& Level::getEnemies() const
 {
     return m_enemies;
+}
+
+const QVector<TriggerWall*>& Level::getTriggerWalls() const
+{
+    return m_triggerWalls;
+}
+
+const QVector<HiddenWall*>& Level::getHiddenWalls() const
+{
+    return m_hiddenWalls;
 }
 
 bool Level::isInBounds(int x, int y) const
@@ -301,9 +327,19 @@ TriggerWall* Level::triggerWallAt(int x, int y) const
     return m_triggerWallByPos.value(posKey(x, y), nullptr);
 }
 
+TriggerWall* Level::triggerWallById(int triggerId) const
+{
+    return m_triggerWallById.value(triggerId, nullptr);
+}
+
 HiddenWall* Level::hiddenWallAt(int x, int y) const
 {
     return m_hiddenWallByPos.value(posKey(x, y), nullptr);
+}
+
+HiddenWall* Level::hiddenWallById(int wallId) const
+{
+    return m_hiddenWallById.value(wallId, nullptr);
 }
 
 Coin* Level::coinAt(int x, int y) const
@@ -368,19 +404,21 @@ InteractionResult Level::interactAt(int x, int y, Player& player, ClueManager& c
             triggerWall->trigger();
             result.triggerActivated = true;
             bool anyOpened = false;
-            for (const QPoint& pos : triggerWall->getOpensPositions()) {
-                bool opened = false;
-                if (HiddenWall* hidden = hiddenWallAt(pos.x(), pos.y())) {
-                    if (hidden->isBlocking()) {
-                        hidden->open();
-                        setTileAndCollision(hidden->getX(), hidden->getY(), static_cast<int>(CellType::Empty), false);
-                        opened = true;
-                    }
-                } else if (isInBounds(pos.x(), pos.y()) && isCollidingAt(pos.x(), pos.y())) {
-                    setTileAndCollision(pos.x(), pos.y(), static_cast<int>(CellType::Empty), false);
-                    opened = true;
+            QVector<int> controlledWallIds = triggerWall->controlledWallIds();
+            std::sort(controlledWallIds.begin(), controlledWallIds.end());
+            for (int wallId : controlledWallIds) {
+                HiddenWall* hidden = hiddenWallById(wallId);
+                if (!hidden) {
+                    qWarning() << "Trigger" << triggerWall->triggerId()
+                               << "references missing hidden wall ID" << wallId;
+                    continue;
                 }
-                anyOpened = anyOpened || opened;
+                const bool openedNow = hidden->onTriggerActivated(triggerWall->triggerId());
+                if (openedNow && hidden->isOpen()) {
+                    setTileAndCollision(hidden->getX(), hidden->getY(),
+                                        static_cast<int>(CellType::OpenedSecretFloor), false);
+                    anyOpened = true;
+                }
             }
             result.wallOpened = anyOpened;
         }
@@ -425,4 +463,91 @@ const QVector<Chamber>& Level::getChambers() const
 int Level::chamberCount() const
 {
     return m_chambers.size();
+}
+
+bool Level::validateTriggerWallConsistency() const
+{
+    bool ok = true;
+    QSet<int> referencedWalls;
+
+    for (const TriggerWall* trigger : m_triggerWalls) {
+        if (!trigger) {
+            continue;
+        }
+        if (trigger->triggerId() < 0) {
+            qWarning() << "Trigger at" << trigger->getX() << trigger->getY()
+                       << "has invalid trigger ID";
+            ok = false;
+        }
+
+        const QVector<int> wallIds = trigger->controlledWallIds();
+        if (wallIds.isEmpty()) {
+            qWarning() << "Trigger" << trigger->triggerId()
+                       << "controls no hidden walls";
+            ok = false;
+        }
+        for (int wallId : wallIds) {
+            HiddenWall* hidden = hiddenWallById(wallId);
+            if (!hidden) {
+                qWarning() << "Trigger" << trigger->triggerId()
+                           << "references missing hidden wall ID" << wallId;
+                ok = false;
+                continue;
+            }
+            referencedWalls.insert(wallId);
+            if (!hidden->requiredTriggerIds().contains(trigger->triggerId())) {
+                qWarning() << "Hidden wall" << wallId
+                           << "is controlled by trigger" << trigger->triggerId()
+                           << "but does not list it as required";
+                ok = false;
+            }
+        }
+    }
+
+    for (const HiddenWall* hidden : m_hiddenWalls) {
+        if (!hidden) {
+            continue;
+        }
+        if (hidden->wallId() < 0) {
+            qWarning() << "Hidden wall at" << hidden->getX() << hidden->getY()
+                       << "has invalid wall ID";
+            ok = false;
+        }
+        if (!referencedWalls.contains(hidden->wallId())) {
+            qWarning() << "Hidden wall" << hidden->wallId()
+                       << "has no valid trigger controlling it";
+            ok = false;
+        }
+        const QVector<int> requiredIds = hidden->requiredTriggerIds();
+        if (requiredIds.isEmpty()) {
+            qWarning() << "Hidden wall" << hidden->wallId()
+                       << "has no required trigger IDs";
+            ok = false;
+            continue;
+        }
+        bool hasValidTrigger = false;
+        for (int triggerId : requiredIds) {
+            TriggerWall* trigger = triggerWallById(triggerId);
+            if (!trigger) {
+                qWarning() << "Hidden wall" << hidden->wallId()
+                           << "references missing trigger ID" << triggerId;
+                ok = false;
+                continue;
+            }
+            hasValidTrigger = true;
+            if (!trigger->controlledWallIds().contains(hidden->wallId())) {
+                qWarning() << "Hidden wall" << hidden->wallId()
+                           << "requires trigger" << triggerId
+                           << "but trigger does not reference this wall";
+                ok = false;
+            }
+        }
+        if (!hasValidTrigger) {
+            qWarning() << "Hidden wall" << hidden->wallId()
+                       << "has no valid trigger objects";
+            ok = false;
+        }
+    }
+
+    return ok;
 }

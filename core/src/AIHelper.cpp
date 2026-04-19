@@ -67,7 +67,7 @@ void AIHelper::rephrase(const QString& text, std::function<void(QString)> callba
     messages.append(user);
 
     body["messages"] = messages;
-    body["max_tokens"] = 80;
+    body["max_tokens"] = 9999999999;
 
     QNetworkRequest req{QUrl(m_apiUrl)};
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));

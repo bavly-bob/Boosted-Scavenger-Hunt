@@ -11,22 +11,29 @@
 
 #include <QTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
+#include <QDir>
+#include <QCoreApplication>
 
 namespace {
-int difficultyTimeOffsetSeconds(Difficulty difficulty)
+QString findDifficultyConfigPath()
 {
-    switch (difficulty) {
-    case Difficulty::EASY:
-        return 30;
-    case Difficulty::NORMAL:
-        return 0;
-    case Difficulty::HARD:
-        return -15;
+    const QStringList candidates = {
+        QDir::current().filePath("levels/difficulty_configs.json"),
+        QDir::current().filePath("../levels/difficulty_configs.json"),
+        QDir(QCoreApplication::applicationDirPath()).filePath("levels/difficulty_configs.json"),
+        QDir(QCoreApplication::applicationDirPath()).filePath("../levels/difficulty_configs.json"),
+        QDir(QCoreApplication::applicationDirPath()).filePath("../../levels/difficulty_configs.json")
+    };
+    for (const QString& path : candidates) {
+        if (QFile::exists(path)) {
+            return QFileInfo(path).absoluteFilePath();
+        }
     }
-    return 0;
+    return QString();
 }
 } // namespace
 
@@ -37,12 +44,23 @@ Game::Game(QObject* parent)
       m_score(0),
       m_highScore(0),
       m_timeRemaining(0),
+      m_runTimeElapsed(0),
+      m_levelTimeElapsed(0),
       m_currentLevelIndex(0),
       m_runSeedBase(0),
+      m_runIndex(0),
+      m_lootRoomsSpawned(0),
+      m_activeGenerationRules(),
+      m_difficultyConfig(DifficultyConfig::defaults()),
       m_clueManager(std::make_unique<ClueManager>()),
     m_timer(new QTimer(this)),
     m_aiHelper(std::make_unique<AIHelper>(this))
 {
+    const QString difficultyConfigPath = findDifficultyConfigPath();
+    if (!difficultyConfigPath.isEmpty()) {
+        m_difficultyConfig = DifficultyConfig::loadFromJson(difficultyConfigPath);
+    }
+
     m_timer->setInterval(1000);
     connect(m_timer, &QTimer::timeout, this, &Game::onTick);
 }
@@ -62,7 +80,15 @@ int Game::levelCount() const
 void Game::startNewGame(Difficulty diff)
 {
     m_score = 0;
+    m_runTimeElapsed = 0;
+    m_levelTimeElapsed = 0;
     m_runSeedBase = QRandomGenerator::global()->generate();
+    ++m_runIndex;
+    m_lootRoomsSpawned = 0;
+    const DifficultyProfile profile = m_difficultyConfig.selectProfile(diff, m_runSeedBase, m_runIndex);
+    m_activeDifficultyProfileId = profile.id;
+    m_activeGenerationRules = profile.rules;
+    m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
     startLevel(0, diff);
 }
 
@@ -80,6 +106,13 @@ void Game::startLevel(int levelIndex, Difficulty diff)
     m_currentLevelIndex = levelIndex;
 
     QJsonArray clues;
+    ProceduralGenerationContext generationContext;
+    generationContext.rules = m_activeGenerationRules;
+    generationContext.runSeedBase = m_runSeedBase;
+    generationContext.runIndex = m_runIndex;
+    generationContext.levelIndex = levelIndex;
+    generationContext.lootRoomsSpawnedThisRun = m_lootRoomsSpawned;
+    bool spawnedLootRoom = false;
     if (m_difficulty == Difficulty::EASY) {
         if (hasStaticLevel) {
             m_currentLevel.reset(LevelLoader::loadFromJson(m_levelFiles.at(levelIndex), &clues));
@@ -87,7 +120,11 @@ void Game::startLevel(int levelIndex, Difficulty diff)
             quint32 seed = m_runSeedBase;
             seed ^= static_cast<quint32>(levelIndex + 1) * 0x9e3779b9u;
             seed ^= 0x13579bdfu;
-            m_currentLevel.reset(LevelLoader::generateProcedural(static_cast<int>(seed), 0, &clues));
+            m_currentLevel.reset(LevelLoader::generateProcedural(static_cast<int>(seed),
+                                                                 0,
+                                                                 generationContext,
+                                                                 &clues,
+                                                                 &spawnedLootRoom));
         }
     } else {
         quint32 seed = m_runSeedBase;
@@ -99,12 +136,19 @@ void Game::startLevel(int levelIndex, Difficulty diff)
         }
 
         const int proceduralDifficulty = (m_difficulty == Difficulty::HARD) ? 2 : 1;
-        m_currentLevel.reset(LevelLoader::generateProcedural(static_cast<int>(seed), proceduralDifficulty, &clues));
+        m_currentLevel.reset(LevelLoader::generateProcedural(static_cast<int>(seed),
+                                                             proceduralDifficulty,
+                                                             generationContext,
+                                                             &clues,
+                                                             &spawnedLootRoom));
 
         // Fallback path if procedural generation fails for any reason.
         if (!m_currentLevel && hasStaticLevel) {
             m_currentLevel.reset(LevelLoader::loadFromJson(m_levelFiles.at(levelIndex), &clues));
         }
+    }
+    if (spawnedLootRoom) {
+        ++m_lootRoomsSpawned;
     }
     m_clueManager->loadClues(clues);
 
@@ -116,13 +160,12 @@ void Game::startLevel(int levelIndex, Difficulty diff)
 
     const QPoint spawn = m_currentLevel->getSpawn();
     m_player = std::make_unique<Player>(spawn.x(), spawn.y());
-
-    const int baseTime = m_currentLevel->getTimeLimit();
-    m_timeRemaining = baseTime + difficultyTimeOffsetSeconds(m_difficulty);
-    if (m_timeRemaining < 10) {
-        m_timeRemaining = 10;
+    m_levelTimeElapsed = 0;
+    if (m_timeRemaining <= 0) {
+        m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
     }
 
+    emit levelChanged(m_currentLevelIndex);
     emit timerTick(m_timeRemaining);
     emit gameUpdated();
     m_timer->start();
@@ -157,6 +200,12 @@ void Game::saveGame(const QString& filepath)
     root["score"] = m_score;
     root["highScore"] = m_highScore;
     root["seedBase"] = static_cast<qint64>(m_runSeedBase);
+    root["runIndex"] = m_runIndex;
+    root["lootRoomsSpawned"] = m_lootRoomsSpawned;
+    root["difficultyProfileId"] = m_activeDifficultyProfileId;
+    root["runTimeSeconds"] = m_runTimeElapsed;
+    root["levelTimeSeconds"] = m_levelTimeElapsed;
+    root["timeRemaining"] = m_timeRemaining;
 
     QJsonDocument doc(root);
     QFile file(filepath);
@@ -184,6 +233,11 @@ bool Game::loadGame(const QString& filepath)
     m_score = root["score"].toInt(0);
     m_highScore = root["highScore"].toInt(m_score);
     m_runSeedBase = static_cast<quint32>(root["seedBase"].toDouble(0.0));
+    m_runIndex = qMax(1, root["runIndex"].toInt(1));
+    m_lootRoomsSpawned = qMax(0, root["lootRoomsSpawned"].toInt(0));
+    const int savedRunTime = root["runTimeSeconds"].toInt(0);
+    const int savedLevelTime = root["levelTimeSeconds"].toInt(0);
+    const int savedTimeRemaining = root["timeRemaining"].toInt(-1);
     if (m_runSeedBase == 0u) {
         m_runSeedBase = QRandomGenerator::global()->generate();
     }
@@ -192,7 +246,21 @@ bool Game::loadGame(const QString& filepath)
     if (diffInt == 0) diff = Difficulty::EASY;
     else if (diffInt == 2) diff = Difficulty::HARD;
 
+    const DifficultyProfile profile = m_difficultyConfig.selectProfile(diff, m_runSeedBase, m_runIndex);
+    m_activeDifficultyProfileId = profile.id;
+    m_activeGenerationRules = profile.rules;
+    m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
+
     startLevel(levelIndex, diff);
+    m_runTimeElapsed = qMax(0, savedRunTime);
+    m_levelTimeElapsed = qMax(0, savedLevelTime);
+    if (savedTimeRemaining >= 0) {
+        m_timeRemaining = qMax(0, savedTimeRemaining);
+    } else {
+        m_timeRemaining = qMax(0, m_activeGenerationRules.startingTime - m_runTimeElapsed);
+    }
+    emit timerTick(m_timeRemaining);
+    emit gameUpdated();
     return true;
 }
 
@@ -354,6 +422,16 @@ int Game::timeRemaining() const
     return m_timeRemaining;
 }
 
+int Game::runTimeSeconds() const
+{
+    return m_runTimeElapsed;
+}
+
+int Game::levelTimeSeconds() const
+{
+    return m_levelTimeElapsed;
+}
+
 int Game::currentLevelIndex() const
 {
     return m_currentLevelIndex;
@@ -408,6 +486,9 @@ void Game::onTick()
     if (m_timeRemaining < 0) {
         m_timeRemaining = 0;
     }
+
+    m_runTimeElapsed += 1;
+    m_levelTimeElapsed += 1;
 
     emit timerTick(m_timeRemaining);
 

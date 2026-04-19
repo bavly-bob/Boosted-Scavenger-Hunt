@@ -141,6 +141,8 @@ QColor tileColour(CellType ct, int x, int y)
         return QColor(0, 0, 0, 0);
     case CellType::TreasureRoom:
         return QColor(160, 130, 40, 180);
+    case CellType::OpenedSecretFloor:
+        return QColor(76, 150, 86, 220);
     case CellType::Coin:
         return QColor(200, 180, 50, 100);
     case CellType::ClueTrigger:
@@ -162,6 +164,11 @@ void drawTileBorder(QPainter& p, const QRect& cell, CellType ct)
         p.setPen(QPen(QColor(18, 14, 10, 90), 1));
         p.drawLine(cell.topLeft(), cell.topRight());
         p.drawLine(cell.topLeft(), cell.bottomLeft());
+        break;
+    case CellType::OpenedSecretFloor:
+        p.setPen(QPen(QColor(36, 90, 48, 120), 1));
+        p.drawLine(cell.topLeft(), cell.topRight());
+        p.drawLine(cell.bottomLeft(), cell.bottomRight());
         break;
     default:
         break;
@@ -189,6 +196,7 @@ GameWindow::GameWindow(QWidget *parent)
     m_gameOverOverlay->hide();
 
     connect(m_game, &Game::gameUpdated,       this, QOverload<>::of(&GameWindow::update));
+    connect(m_game, &Game::levelChanged,      this, &GameWindow::onLevelChanged);
     connect(m_game, &Game::clueRevealed,      this, &GameWindow::onClueRevealed);
     connect(m_game, &Game::wallOpened,        this, &GameWindow::onWallOpened);
     connect(m_game, &Game::treasureUnlocked,  this, &GameWindow::onTreasureUnlocked);
@@ -218,9 +226,6 @@ GameWindow::GameWindow(QWidget *parent)
         m_statusText.clear();
         m_statusIsAiHint = false;
         m_game->restartLevel();
-        resetExplored();
-        resizeToCurrentLevel();
-        injectSprites();
         setFocus();
     });
     connect(m_pauseOverlay, &PauseOverlay::mainMenuRequested, this, [this]() {
@@ -236,9 +241,6 @@ GameWindow::GameWindow(QWidget *parent)
         m_statusText.clear();
         m_statusIsAiHint = false;
         m_game->nextLevel();
-        resetExplored();
-        resizeToCurrentLevel();
-        injectSprites();
         setFocus();
     });
     connect(m_gameOverOverlay, &GameOverOverlay::restartRequested, this, [this]() {
@@ -246,9 +248,6 @@ GameWindow::GameWindow(QWidget *parent)
         m_statusText.clear();
         m_statusIsAiHint = false;
         m_game->restartLevel();
-        resetExplored();
-        resizeToCurrentLevel();
-        injectSprites();
         setFocus();
     });
     connect(m_gameOverOverlay, &GameOverOverlay::mainMenuRequested, this, [this]() {
@@ -362,6 +361,7 @@ void GameWindow::loadAssets()
     if (assetsDir.isEmpty()) return;
     m_floorTiles.clear();
     m_wallTiles.clear();
+    m_openedSecretFloorTile = QPixmap();
     m_treasurePedestalTile = QPixmap();
     m_pressurePlateTile = QPixmap();
     m_vignetteOverlay = QPixmap();
@@ -384,6 +384,9 @@ void GameWindow::loadAssets()
         if (loadTileWithFallback(pix, {file}, TILE_SIZE)) {
             m_floorTiles.append(pix);
         }
+    }
+    if (!m_floorTiles.isEmpty()) {
+        m_openedSecretFloorTile = tintedPixmap(m_floorTiles.at(0), QColor(66, 200, 88), 110);
     }
 
     const QStringList wallFiles = {
@@ -580,10 +583,6 @@ void GameWindow::startNewGame(Difficulty difficulty)
     m_gameOverOverlay->hide();
 
     m_game->startNewGame(difficulty);
-    resetExplored();
-    resizeToCurrentLevel();
-    snapCameraToPlayer();
-    injectSprites();
 
     show();
     setFocus();
@@ -601,11 +600,6 @@ bool GameWindow::loadSavedGame(const QString& filepath)
     if (!m_game->loadGame(filepath)) {
         return false;
     }
-    
-    resetExplored();
-    resizeToCurrentLevel();
-    snapCameraToPlayer();
-    injectSprites();
 
     show();
     setFocus();
@@ -668,6 +662,7 @@ void GameWindow::paintEvent(QPaintEvent *event)
         const QString highScoreText = QString("High: %1").arg(m_game->highScore());
         const int coins = m_game->coinsCollected();
         const QString timeText = formatTime(m_game->timeRemaining());
+        const QString runTimeText = formatTime(m_game->runTimeSeconds());
         QFont titleFont = p.font();
         titleFont.setBold(true);
         titleFont.setPointSize(11);
@@ -698,6 +693,10 @@ void GameWindow::paintEvent(QPaintEvent *event)
         const QColor timeColor = (timeRemaining > 30) ? QColor(200, 220, 200)
                                  : (timeRemaining > 10) ? QColor(240, 200, 80)
                                  : QColor(240, 80, 80);
+        p.setPen(QColor(175, 205, 255));
+        p.drawText(QRect(width() - 245, 32, 118, 18),
+                   Qt::AlignRight | Qt::AlignVCenter,
+                   QString("Run: %1").arg(runTimeText));
         p.setPen(timeColor);
         p.drawText(QRect(width() - 120, 32, 108, 18),
                    Qt::AlignRight | Qt::AlignVCenter,
@@ -798,7 +797,10 @@ void GameWindow::paintEvent(QPaintEvent *event)
             }
 
             bool drewFloor = false;
-            if (!m_floorTiles.isEmpty()) {
+            if (ct == CellType::OpenedSecretFloor && !m_openedSecretFloorTile.isNull()) {
+                p.drawPixmap(cell, m_openedSecretFloorTile);
+                drewFloor = true;
+            } else if (!m_floorTiles.isEmpty()) {
                 const quint32 roll = tileHash(x, y, 29u) % 100u;
                 int floorIdx = 0;
                 if (ct == CellType::Corridor) {
@@ -1023,9 +1025,6 @@ void GameWindow::mousePressEvent(QMouseEvent *event)
 
         if (restartBtn.contains(event->pos())) {
             m_game->restartLevel();
-            resetExplored();
-            resizeToCurrentLevel();
-            injectSprites();
             setFocus();
             return;
         }
@@ -1042,6 +1041,21 @@ void GameWindow::mousePressEvent(QMouseEvent *event)
 
     QWidget::mousePressEvent(event);
 }
+
+void GameWindow::onLevelChanged(int levelIndex)
+{
+    Q_UNUSED(levelIndex);
+    hidePauseOverlay();
+    m_gameOverOverlay->hide();
+    m_statusText.clear();
+    m_statusIsAiHint = false;
+    resetExplored();
+    resizeToCurrentLevel();
+    snapCameraToPlayer();
+    injectSprites();
+    update();
+}
+
 void GameWindow::onClueRevealed(const QString& text)
 {
     m_statusText = text;

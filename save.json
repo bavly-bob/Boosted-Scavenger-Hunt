@@ -1,5 +1,13 @@
 {
     "difficulty": 1,
+    "difficultyProfileId": "normal_standard",
+    "highScore": 800,
     "levelIndex": 1,
-    "score": 400
+    "levelTimeSeconds": 7,
+    "lootRoomsSpawned": 1,
+    "runIndex": 2,
+    "runTimeSeconds": 64,
+    "score": 800,
+    "seedBase": 2148616258,
+    "timeRemaining": 141
 }

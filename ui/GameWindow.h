@@ -34,6 +34,7 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private slots:
+    void onLevelChanged(int levelIndex);
     void onClueRevealed(const QString& text);
     void onWallOpened();
     void onTreasureUnlocked();
@@ -61,6 +62,7 @@ private:
     float             m_deltaMs;
     QVector<QPixmap>  m_floorTiles;
     QVector<QPixmap>  m_wallTiles;
+    QPixmap           m_openedSecretFloorTile;
     QPixmap           m_treasurePedestalTile;
     QPixmap           m_pressurePlateTile;
     QPixmap           m_vignetteOverlay;

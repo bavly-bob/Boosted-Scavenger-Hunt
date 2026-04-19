@@ -39,6 +39,7 @@ set(PROJECT_SOURCES
         gameplay/include/TreasureRoom.h gameplay/src/TreasureRoom.cpp
         gameplay/include/ClueTrigger.h gameplay/src/ClueTrigger.cpp
         systems/include/LevelLoader.h systems/src/LevelLoader.cpp
+        systems/include/DifficultyConfig.h systems/src/DifficultyConfig.cpp
         systems/include/ClueManager.h systems/src/ClueManager.cpp
         systems/include/InputHandler.h systems/src/InputHandler.cpp
         systems/include/SpriteManager.h systems/src/SpriteManager.cpp

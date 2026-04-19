@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DifficultyConfig.h"
 #include "Enums.h"
 
 #include <QObject>
@@ -25,8 +26,15 @@ class Game : public QObject {
     int m_score;
     int m_highScore;
     int m_timeRemaining;
+    int m_runTimeElapsed;
+    int m_levelTimeElapsed;
     int m_currentLevelIndex;
     quint32 m_runSeedBase;
+    int m_runIndex;
+    int m_lootRoomsSpawned;
+    QString m_activeDifficultyProfileId;
+    ProceduralGenerationRules m_activeGenerationRules;
+    DifficultyConfig m_difficultyConfig;
 
     QStringList m_levelFiles;
     std::unique_ptr<Level> m_currentLevel;
@@ -59,6 +67,8 @@ public:
     int score() const;
     int highScore() const;
     int timeRemaining() const;
+    int runTimeSeconds() const;
+    int levelTimeSeconds() const;
     int currentLevelIndex() const;
     QString currentLevelName() const;
     int coinsCollected() const;
@@ -75,6 +85,7 @@ signals:
     void treasureUnlocked();
     void gameOver(bool won, int score);
     void timerTick(int secondsLeft);
+    void levelChanged(int levelIndex);
 
 private slots:
     void onTick();

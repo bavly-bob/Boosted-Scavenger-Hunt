@@ -1,0 +1,89 @@
+{
+  "difficultyConfigs": [
+    {
+      "id": "easy_explorer",
+      "difficulty": "easy",
+      "startingTime": 290,
+      "lootRoom": {
+        "spawnFrequency": 0.33,
+        "maxPerRun": 1,
+        "triggerCountRequired": 2
+      },
+      "generalTriggers": {
+        "min": 1,
+        "max": 2
+      },
+      "hiddenWalls": {
+        "frequency": 0.35
+      }
+    },
+    {
+      "id": "easy_tactician",
+      "difficulty": "easy",
+      "startingTime": 255,
+      "lootRoom": {
+        "spawnFrequency": 0.40,
+        "maxPerRun": 1,
+        "triggerCountRequired": 2
+      },
+      "generalTriggers": {
+        "min": 2,
+        "max": 2
+      },
+      "hiddenWalls": {
+        "frequency": 0.55
+      }
+    },
+    {
+      "id": "easy_speedrun",
+      "difficulty": "easy",
+      "startingTime": 235,
+      "lootRoom": {
+        "spawnFrequency": 0.28,
+        "maxPerRun": 1,
+        "triggerCountRequired": 2
+      },
+      "generalTriggers": {
+        "min": 2,
+        "max": 3
+      },
+      "hiddenWalls": {
+        "frequency": 0.65
+      }
+    },
+    {
+      "id": "normal_standard",
+      "difficulty": "normal",
+      "startingTime": 205,
+      "lootRoom": {
+        "spawnFrequency": 0.22,
+        "maxPerRun": 1,
+        "triggerCountRequired": 2
+      },
+      "generalTriggers": {
+        "min": 2,
+        "max": 3
+      },
+      "hiddenWalls": {
+        "frequency": 0.65
+      }
+    },
+    {
+      "id": "hard_brutal",
+      "difficulty": "hard",
+      "startingTime": 170,
+      "lootRoom": {
+        "spawnFrequency": 0.18,
+        "maxPerRun": 1,
+        "triggerCountRequired": 3
+      },
+      "generalTriggers": {
+        "min": 3,
+        "max": 4
+      },
+      "hiddenWalls": {
+        "frequency": 0.85
+      }
+    }
+  ]
+}

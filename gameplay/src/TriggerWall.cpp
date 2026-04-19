@@ -3,12 +3,17 @@
 #include "SpriteManager.h"
 
 #include <QPainter>
+#include <algorithm>
 
-TriggerWall::TriggerWall(int x, int y, const QVector<QPoint>& opens)
+TriggerWall::TriggerWall(int x, int y, int triggerId, const QVector<int>& controlledWallIds)
     : Wall(x, y),
-      m_opensPositions(opens),
-      m_triggered(false)
+      m_controlledWallIds(controlledWallIds),
+      m_triggered(false),
+      m_triggerId(triggerId)
 {
+    std::sort(m_controlledWallIds.begin(), m_controlledWallIds.end());
+    m_controlledWallIds.erase(std::unique(m_controlledWallIds.begin(), m_controlledWallIds.end()),
+                              m_controlledWallIds.end());
 }
 
 QString TriggerWall::getType() const
@@ -56,7 +61,12 @@ bool TriggerWall::isTriggered() const
     return m_triggered;
 }
 
-QVector<QPoint> TriggerWall::getOpensPositions() const
+QVector<int> TriggerWall::controlledWallIds() const
 {
-    return m_opensPositions;
+    return m_controlledWallIds;
+}
+
+int TriggerWall::triggerId() const
+{
+    return m_triggerId;
 }

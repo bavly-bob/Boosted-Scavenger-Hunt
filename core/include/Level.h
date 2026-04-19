@@ -6,6 +6,7 @@
 #include <QPoint>
 #include <QHash>
 #include <QtGlobal>
+#include <QSet>
 #include <QString>
 #include <QList>
 #include <QVector>
@@ -45,6 +46,8 @@ class Level {
     QHash<quint64, Wall*> m_wallByPos;
     QHash<quint64, TriggerWall*> m_triggerWallByPos;
     QHash<quint64, HiddenWall*> m_hiddenWallByPos;
+    QHash<int, TriggerWall*> m_triggerWallById;
+    QHash<int, HiddenWall*> m_hiddenWallById;
     QHash<quint64, Coin*> m_coinByPos;
     QHash<quint64, ClueTrigger*> m_clueTriggerByPos;
     QHash<quint64, Enemy*> m_enemyByPos;
@@ -85,6 +88,8 @@ public:
     const QList<GameObject*>& getObjects() const;
     const QVector<Coin*>& getCoins() const;
     const QVector<Enemy*>& getEnemies() const;
+    const QVector<TriggerWall*>& getTriggerWalls() const;
+    const QVector<HiddenWall*>& getHiddenWalls() const;
 
     bool isInBounds(int x, int y) const;
     bool isWalkable(int x, int y) const;
@@ -93,7 +98,9 @@ public:
 
     Wall* wallAt(int x, int y) const;
     TriggerWall* triggerWallAt(int x, int y) const;
+    TriggerWall* triggerWallById(int triggerId) const;
     HiddenWall* hiddenWallAt(int x, int y) const;
+    HiddenWall* hiddenWallById(int wallId) const;
     Coin* coinAt(int x, int y) const;
     ClueTrigger* clueTriggerAt(int x, int y) const;
     Enemy* enemyAt(int x, int y) const;
@@ -103,6 +110,7 @@ public:
     void addChamber(const Chamber& ch);
     const QVector<Chamber>& getChambers() const;
     int chamberCount() const;
+    bool validateTriggerWallConsistency() const;
 
 private:
     QVector<Chamber> m_chambers;

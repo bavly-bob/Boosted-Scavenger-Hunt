@@ -19,6 +19,7 @@
 #include <QRandomGenerator>
 #include <QSet>
 #include <QVector>
+#include <QDebug>
 #include <algorithm>
 #include <functional>
 #include <limits>
@@ -219,6 +220,204 @@ void distributeCoins(QVector<Chamber>& chambers, int spawnIdx,
     }
 }
 
+quint64 jsonCellKey(int x, int y)
+{
+    return (static_cast<quint64>(static_cast<quint32>(x)) << 32)
+         | static_cast<quint64>(static_cast<quint32>(y));
+}
+
+QVector<int> readIntList(const QJsonArray& values)
+{
+    QVector<int> out;
+    out.reserve(values.size());
+    for (const QJsonValue& value : values) {
+        out.push_back(value.toInt(-1));
+    }
+    return out;
+}
+
+struct HiddenWallJsonSpec {
+    int id = -1;
+    QPoint pos = QPoint(-1, -1);
+    int connectedNodeA = -1;
+    int connectedNodeB = -1;
+    QVector<int> requiredTriggerIds;
+};
+
+struct TriggerWallJsonSpec {
+    int id = -1;
+    QPoint pos = QPoint(-1, -1);
+    QVector<int> wallIds;
+};
+
+QVector<HiddenWallJsonSpec> parseHiddenWallSpecs(const QJsonArray& hiddenWalls,
+                                                 const Level* level,
+                                                 QHash<quint64, int>& wallIdByCell)
+{
+    QVector<HiddenWallJsonSpec> specs;
+    QSet<int> usedIds;
+    int nextId = 0;
+
+    auto reserveUniqueWallId = [&](int requestedId) {
+        int id = requestedId;
+        if (id < 0 || usedIds.contains(id)) {
+            if (id >= 0 && usedIds.contains(id)) {
+                qWarning() << "Duplicate hidden wall ID in JSON:" << id << "- reassigning deterministically";
+            }
+            while (usedIds.contains(nextId)) {
+                ++nextId;
+            }
+            id = nextId++;
+        }
+        usedIds.insert(id);
+        if (id >= nextId) {
+            nextId = id + 1;
+        }
+        return id;
+    };
+
+    for (const QJsonValue& value : hiddenWalls) {
+        HiddenWallJsonSpec spec;
+        if (value.isObject()) {
+            const QJsonObject obj = value.toObject();
+            spec.id = reserveUniqueWallId(obj.value("id").toInt(-1));
+            spec.pos = QPoint(obj.value("x").toInt(-1), obj.value("y").toInt(-1));
+            if (spec.pos.x() < 0 || spec.pos.y() < 0) {
+                const QJsonArray pos = obj.value("pos").toArray();
+                if (pos.size() >= 2) {
+                    spec.pos = QPoint(pos.at(0).toInt(-1), pos.at(1).toInt(-1));
+                }
+            }
+            spec.connectedNodeA = obj.value("connectedNodeA").toInt(-1);
+            spec.connectedNodeB = obj.value("connectedNodeB").toInt(-1);
+            spec.requiredTriggerIds = readIntList(obj.value("requiredTriggerIds").toArray());
+        } else {
+            const QJsonArray xy = value.toArray();
+            if (xy.size() < 2) {
+                continue;
+            }
+            spec.id = reserveUniqueWallId(-1);
+            spec.pos = QPoint(xy.at(0).toInt(-1), xy.at(1).toInt(-1));
+        }
+
+        if (!level->isInBounds(spec.pos.x(), spec.pos.y())) {
+            qWarning() << "Skipping hidden wall outside bounds at" << spec.pos;
+            continue;
+        }
+
+        const quint64 key = jsonCellKey(spec.pos.x(), spec.pos.y());
+        if (wallIdByCell.contains(key)) {
+            qWarning() << "Duplicate hidden wall position in JSON at" << spec.pos
+                       << "- keeping first wall ID" << wallIdByCell.value(key);
+            continue;
+        }
+        wallIdByCell.insert(key, spec.id);
+        specs.push_back(spec);
+    }
+
+    return specs;
+}
+
+QVector<TriggerWallJsonSpec> parseTriggerWallSpecs(const QJsonArray& triggerWalls,
+                                                   const Level* level,
+                                                   const QHash<quint64, int>& wallIdByCell)
+{
+    QVector<TriggerWallJsonSpec> specs;
+    QSet<int> usedIds;
+    int nextId = 0;
+
+    auto reserveUniqueTriggerId = [&](int requestedId) {
+        int id = requestedId;
+        if (id < 0 || usedIds.contains(id)) {
+            if (id >= 0 && usedIds.contains(id)) {
+                qWarning() << "Duplicate trigger ID in JSON:" << id << "- reassigning deterministically";
+            }
+            while (usedIds.contains(nextId)) {
+                ++nextId;
+            }
+            id = nextId++;
+        }
+        usedIds.insert(id);
+        if (id >= nextId) {
+            nextId = id + 1;
+        }
+        return id;
+    };
+
+    for (const QJsonValue& value : triggerWalls) {
+        if (!value.isObject()) {
+            continue;
+        }
+
+        TriggerWallJsonSpec spec;
+        const QJsonObject obj = value.toObject();
+        spec.id = reserveUniqueTriggerId(obj.value("id").toInt(-1));
+        spec.pos = QPoint(obj.value("x").toInt(-1), obj.value("y").toInt(-1));
+        if (!level->isInBounds(spec.pos.x(), spec.pos.y())) {
+            qWarning() << "Skipping trigger outside bounds at" << spec.pos;
+            continue;
+        }
+
+        spec.wallIds = readIntList(obj.value("controlsWallIds").toArray());
+        if (spec.wallIds.isEmpty()) {
+            const QJsonArray opensWalls = obj.value("opensWalls").toArray();
+            for (const QJsonValue& openValue : opensWalls) {
+                const QJsonArray xy = openValue.toArray();
+                if (xy.size() < 2) {
+                    continue;
+                }
+                const QPoint target(xy.at(0).toInt(-1), xy.at(1).toInt(-1));
+                const int wallId = wallIdByCell.value(jsonCellKey(target.x(), target.y()), -1);
+                if (wallId < 0) {
+                    qWarning() << "Trigger" << spec.id
+                               << "references missing wall at" << target;
+                    continue;
+                }
+                spec.wallIds.push_back(wallId);
+            }
+        }
+
+        std::sort(spec.wallIds.begin(), spec.wallIds.end());
+        spec.wallIds.erase(std::unique(spec.wallIds.begin(), spec.wallIds.end()), spec.wallIds.end());
+        specs.push_back(spec);
+    }
+
+    return specs;
+}
+
+void applyHiddenAndTriggerSpecs(Level* level,
+                                const QVector<HiddenWallJsonSpec>& hiddenSpecs,
+                                const QVector<TriggerWallJsonSpec>& triggerSpecs)
+{
+    QHash<int, QSet<int>> triggerIdsByWall;
+    for (const TriggerWallJsonSpec& triggerSpec : triggerSpecs) {
+        for (int wallId : triggerSpec.wallIds) {
+            triggerIdsByWall[wallId].insert(triggerSpec.id);
+        }
+    }
+
+    for (const HiddenWallJsonSpec& hiddenSpec : hiddenSpecs) {
+        HiddenWall* wall = new HiddenWall(hiddenSpec.pos.x(),
+                                          hiddenSpec.pos.y(),
+                                          hiddenSpec.id,
+                                          hiddenSpec.connectedNodeA,
+                                          hiddenSpec.connectedNodeB);
+        if (!hiddenSpec.requiredTriggerIds.isEmpty()) {
+            wall->setRequiredTriggerIds(hiddenSpec.requiredTriggerIds);
+        } else {
+            wall->setRequiredTriggerIds(triggerIdsByWall.value(hiddenSpec.id).values().toVector());
+        }
+        level->addHiddenWall(wall);
+    }
+
+    for (const TriggerWallJsonSpec& triggerSpec : triggerSpecs) {
+        level->addTriggerWall(new TriggerWall(triggerSpec.pos.x(),
+                                              triggerSpec.pos.y(),
+                                              triggerSpec.id,
+                                              triggerSpec.wallIds));
+    }
+}
+
 QJsonArray buildDefaultClues()
 {
     QJsonArray clues;
@@ -317,40 +516,12 @@ Level* buildFromChamberJson(const QJsonObject& root, QJsonArray* outClues)
     }
 
     const QJsonArray hiddenWalls = root.value("hiddenWalls").toArray();
-    for (const QJsonValue& value : hiddenWalls) {
-        const QJsonArray xy = value.toArray();
-        if (xy.size() < 2) continue;
-        const int x = xy.at(0).toInt();
-        const int y = xy.at(1).toInt();
-        if (level->isInBounds(x, y)) {
-            level->setTileAt(x, y, static_cast<int>(CellType::HiddenWall));
-            level->setCollisionAt(x, y, true);
-            level->addHiddenWall(new HiddenWall(x, y));
-        }
-    }
-
-    // Trigger walls open target walls defined in "opensWalls".
     const QJsonArray triggerWalls = root.value("triggerWalls").toArray();
-    for (const QJsonValue& value : triggerWalls) {
-        const QJsonObject tw = value.toObject();
-        const int x = tw.value("x").toInt();
-        const int y = tw.value("y").toInt();
-
-        QVector<QPoint> opens;
-        const QJsonArray opensWalls = tw.value("opensWalls").toArray();
-        for (const QJsonValue& openValue : opensWalls) {
-            const QJsonArray xy = openValue.toArray();
-            if (xy.size() >= 2) {
-                opens.push_back(QPoint(xy.at(0).toInt(), xy.at(1).toInt()));
-            }
-        }
-
-        if (level->isInBounds(x, y) && !opens.isEmpty()) {
-            level->setTileAt(x, y, static_cast<int>(CellType::Wall));
-            level->setCollisionAt(x, y, true);
-            level->addTriggerWall(new TriggerWall(x, y, opens));
-        }
-    }
+    QHash<quint64, int> wallIdByCell;
+    const QVector<HiddenWallJsonSpec> hiddenSpecs = parseHiddenWallSpecs(hiddenWalls, level, wallIdByCell);
+    const QVector<TriggerWallJsonSpec> triggerSpecs = parseTriggerWallSpecs(triggerWalls, level, wallIdByCell);
+    applyHiddenAndTriggerSpecs(level, hiddenSpecs, triggerSpecs);
+    level->validateTriggerWallConsistency();
 
     const QJsonArray clues = root.value("clues").toArray().isEmpty()
         ? buildDefaultClues()
@@ -437,24 +608,12 @@ Level* LevelLoader::loadFromJson(const QString& filePath, QJsonArray* outClues)
     }
 
     const QJsonArray hiddenWalls = root.value("hiddenWalls").toArray();
-    for (const QJsonValue& value : hiddenWalls) {
-        const QJsonArray xy = value.toArray();
-        if (xy.size() < 2) continue;
-        level->addHiddenWall(new HiddenWall(xy.at(0).toInt(), xy.at(1).toInt()));
-    }
-
     const QJsonArray triggerWalls = root.value("triggerWalls").toArray();
-    for (const QJsonValue& value : triggerWalls) {
-        const QJsonObject tw = value.toObject();
-        QVector<QPoint> opens;
-        const QJsonArray opensWalls = tw.value("opensWalls").toArray();
-        for (const QJsonValue& openValue : opensWalls) {
-            const QJsonArray xy = openValue.toArray();
-            if (xy.size() >= 2)
-                opens.push_back(QPoint(xy.at(0).toInt(), xy.at(1).toInt()));
-        }
-        level->addTriggerWall(new TriggerWall(tw.value("x").toInt(), tw.value("y").toInt(), opens));
-    }
+    QHash<quint64, int> wallIdByCell;
+    const QVector<HiddenWallJsonSpec> hiddenSpecs = parseHiddenWallSpecs(hiddenWalls, level, wallIdByCell);
+    const QVector<TriggerWallJsonSpec> triggerSpecs = parseTriggerWallSpecs(triggerWalls, level, wallIdByCell);
+    applyHiddenAndTriggerSpecs(level, hiddenSpecs, triggerSpecs);
+    level->validateTriggerWallConsistency();
 
     const QJsonArray coins = root.value("coins").toArray();
     for (const QJsonValue& value : coins) {
@@ -874,26 +1033,63 @@ int chooseTreasureNode(const QVector<int>& depths, const QVector<int>& zones, co
     return best;
 }
 
-QPoint pickGateCell(const QVector<QPoint>& path, const Chamber& a, const Chamber& b)
+struct EdgeDoorways {
+    QPoint nearA = QPoint(-1, -1);
+    QPoint nearB = QPoint(-1, -1);
+};
+
+struct GatePlacement {
+    int edgeIndex = -1;
+    int nodeA = -1;
+    int nodeB = -1;
+    int gatedChamber = -1;
+    QPoint gateCell = QPoint(-1, -1);
+};
+
+QPoint findExitCellFromChamber(const QVector<QPoint>& path, const Chamber& chamber, bool fromStart)
 {
-    if (path.isEmpty()) return QPoint(-1, -1);
-    const int mid = path.size() / 2;
+    if (path.size() < 2) return QPoint(-1, -1);
 
-    for (int r = 0; r <= mid; ++r) {
-        const int idxA = mid + r;
-        const int idxB = mid - r;
-
-        if (idxA >= 1 && idxA < path.size() - 1) {
-            const QPoint p = path[idxA];
-            if (!chamberContains(a, p) && !chamberContains(b, p)) return p;
+    if (fromStart) {
+        for (int i = 1; i < path.size(); ++i) {
+            const QPoint prev = path.at(i - 1);
+            const QPoint cur = path.at(i);
+            if (chamberContains(chamber, prev) && !chamberContains(chamber, cur)) {
+                return cur;
+            }
         }
-        if (idxB >= 1 && idxB < path.size() - 1) {
-            const QPoint p = path[idxB];
-            if (!chamberContains(a, p) && !chamberContains(b, p)) return p;
+    } else {
+        for (int i = path.size() - 2; i >= 0; --i) {
+            const QPoint prev = path.at(i + 1);
+            const QPoint cur = path.at(i);
+            if (chamberContains(chamber, prev) && !chamberContains(chamber, cur)) {
+                return cur;
+            }
         }
     }
 
-    return path[mid];
+    return QPoint(-1, -1);
+}
+
+EdgeDoorways resolveEdgeDoorways(const QVector<QPoint>& path, const Chamber& a, const Chamber& b)
+{
+    EdgeDoorways doors;
+    doors.nearA = findExitCellFromChamber(path, a, true);
+    doors.nearB = findExitCellFromChamber(path, b, false);
+    return doors;
+}
+
+bool isValidGateTile(const Level* level, const QPoint& p)
+{
+    if (!level || !level->isInBounds(p.x(), p.y())) return false;
+    return static_cast<CellType>(level->tileAt(p.x(), p.y())) == CellType::Corridor;
+}
+
+void appendUniquePoint(QVector<QPoint>& out, const QPoint& value)
+{
+    if (!out.contains(value)) {
+        out.push_back(value);
+    }
 }
 
 QPoint pickPointInChamber(const Chamber& ch, QRandomGenerator& rng, const QSet<quint64>& occupied, int margin = 1)
@@ -960,9 +1156,29 @@ void appendCoinClues(QJsonArray& clues, int difficultyTier)
 
 Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* outClues)
 {
+    ProceduralGenerationContext defaultContext;
+    return generateProcedural(seed, difficulty, defaultContext, outClues, nullptr);
+}
+
+Level* LevelLoader::generateProcedural(int seed,
+                                       int difficulty,
+                                       const ProceduralGenerationContext& context,
+                                       QJsonArray* outClues,
+                                       bool* outLootRoomSpawned)
+{
+    if (outLootRoomSpawned) {
+        *outLootRoomSpawned = false;
+    }
+
     const int difficultyTier = (difficulty <= 0) ? 0 : (difficulty >= 2) ? 2 : 1;
     const DifficultyTemplate tpl = buildTemplate(difficultyTier);
     QRandomGenerator rng(static_cast<quint32>(seed));
+
+    const double hiddenWallFrequency = qBound(0.0, context.rules.hiddenWalls.frequency, 1.0);
+    const int minGeneralTriggers = qMax(1, context.rules.generalTriggers.min);
+    const int maxGeneralTriggers = qMax(minGeneralTriggers, context.rules.generalTriggers.max);
+    const int lootTriggerCountRequired = qMax(2, context.rules.lootRoom.triggerCountRequired);
+    const double lootSpawnFrequency = qBound(0.0, context.rules.lootRoom.spawnFrequency, 1.0);
 
     Level* level = new Level();
     level->setName(QString("%1 (seed %2)").arg(tpl.name).arg(seed));
@@ -988,16 +1204,211 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
         level->addChamber(ch);
     }
 
-    QHash<quint64, QVector<QPoint>> edgePathCells;
-    for (const GraphEdge& e : tpl.edges) {
-        if (e.a < 0 || e.b < 0 || e.a >= chambers.size() || e.b >= chambers.size()) continue;
-        const bool horizontalFirst = (rng.bounded(100) + e.a * 11 + e.b * 17) % 2 == 0;
-        const QVector<QPoint> path = carveCorridorWithPath(level, chambers[e.a].centre(),
-                                                           chambers[e.b].centre(), horizontalFirst);
-        edgePathCells.insert(makePairKey(e.a, e.b), path);
+    struct EdgePlan {
+        GraphEdge edge;
+        int templateIndex = -1;
+        bool active = true;
+        bool generalGate = false;
+        bool lootGate = false;
+        int gatedRoom = -1;
+    };
+    QVector<EdgePlan> plans;
+    plans.reserve(tpl.edges.size());
+    for (int i = 0; i < tpl.edges.size(); ++i) {
+        EdgePlan p;
+        p.edge = tpl.edges.at(i);
+        p.templateIndex = i;
+        plans.push_back(p);
     }
 
-    const QVector<QVector<int>> adj = buildAdjacency(chambers.size(), tpl.edges);
+    auto buildAdjFromPlans = [&](bool onlyActive) {
+        QVector<GraphEdge> edges;
+        edges.reserve(plans.size());
+        for (const EdgePlan& p : plans) {
+            if (onlyActive && !p.active) {
+                continue;
+            }
+            edges.push_back(p.edge);
+        }
+        return buildAdjacency(chambers.size(), edges);
+    };
+
+    const QVector<QVector<int>> fullAdj = buildAdjFromPlans(false);
+    const int provisionalSpawn = chooseSpawnNode(chambers, fullAdj, tpl.mapW, tpl.mapH);
+    const QVector<int> fullDepths = bfsDepths(fullAdj, provisionalSpawn);
+
+    QVector<int> candidateGeneralGateEdges;
+    for (int i = 0; i < plans.size(); ++i) {
+        if (plans[i].edge.gated) {
+            candidateGeneralGateEdges.push_back(i);
+        }
+    }
+    std::sort(candidateGeneralGateEdges.begin(), candidateGeneralGateEdges.end(), [&](int lhs, int rhs) {
+        const EdgePlan& a = plans[lhs];
+        const EdgePlan& b = plans[rhs];
+        const int aDepth = qMax(fullDepths.value(a.edge.a, -1), fullDepths.value(a.edge.b, -1));
+        const int bDepth = qMax(fullDepths.value(b.edge.a, -1), fullDepths.value(b.edge.b, -1));
+        if (aDepth != bDepth) {
+            return aDepth > bDepth;
+        }
+        return lhs < rhs;
+    });
+
+    const int desiredGeneralGates = qBound(0,
+                                           qRound(hiddenWallFrequency * candidateGeneralGateEdges.size()),
+                                           candidateGeneralGateEdges.size());
+    QSet<int> reservedGatedRooms;
+    int selectedGeneralGates = 0;
+    for (int planIndex : candidateGeneralGateEdges) {
+        if (selectedGeneralGates >= desiredGeneralGates) {
+            break;
+        }
+        if (!plans[planIndex].active) {
+            continue;
+        }
+
+        const QVector<QVector<int>> currentAdj = buildAdjFromPlans(true);
+        QVector<int> endpoints = {plans[planIndex].edge.a, plans[planIndex].edge.b};
+        std::sort(endpoints.begin(), endpoints.end(), [&](int lhs, int rhs) {
+            if (fullDepths.value(lhs, -1) != fullDepths.value(rhs, -1)) {
+                return fullDepths.value(lhs, -1) > fullDepths.value(rhs, -1);
+            }
+            return lhs > rhs;
+        });
+
+        int chosenRoom = -1;
+        for (int node : endpoints) {
+            if (node == provisionalSpawn) {
+                continue;
+            }
+            if (reservedGatedRooms.contains(node)) {
+                continue;
+            }
+            if (currentAdj.value(node).size() <= 1) {
+                continue;
+            }
+            chosenRoom = node;
+            break;
+        }
+        if (chosenRoom < 0) {
+            continue;
+        }
+
+        plans[planIndex].generalGate = true;
+        plans[planIndex].gatedRoom = chosenRoom;
+        reservedGatedRooms.insert(chosenRoom);
+        ++selectedGeneralGates;
+
+        for (int i = 0; i < plans.size(); ++i) {
+            if (i == planIndex || !plans[i].active) {
+                continue;
+            }
+            const GraphEdge& e = plans[i].edge;
+            if (e.a == chosenRoom || e.b == chosenRoom) {
+                plans[i].active = false;
+            }
+        }
+    }
+
+    int lootRoomNode = -1;
+    int lootGatePlanIndex = -1;
+    bool lootRoomSpawned = false;
+    if (context.rules.lootRoom.maxPerRun > 0
+        && context.lootRoomsSpawnedThisRun < context.rules.lootRoom.maxPerRun
+        && lootSpawnFrequency > 0.0) {
+        quint32 rollSeed = static_cast<quint32>(seed);
+        rollSeed ^= context.runSeedBase * 0x9e3779b9u;
+        rollSeed ^= static_cast<quint32>(context.runIndex + 1) * 0x85ebca6bu;
+        rollSeed ^= static_cast<quint32>(context.levelIndex + 1) * 0xc2b2ae35u;
+        const double roll = static_cast<double>(rollSeed % 10000u) / 10000.0;
+        if (roll < lootSpawnFrequency) {
+            QVector<QVector<int>> adjBeforeLoot = buildAdjFromPlans(true);
+            const int spawnForLootPass = chooseSpawnNode(chambers, adjBeforeLoot, tpl.mapW, tpl.mapH);
+            const QVector<int> depthsForLootPass = bfsDepths(adjBeforeLoot, spawnForLootPass);
+            const QVector<int> zonesForLootPass = zonesFromDepths(depthsForLootPass);
+
+            int bestLootScore = std::numeric_limits<int>::min();
+            for (int node = 0; node < chambers.size(); ++node) {
+                if (node == spawnForLootPass) {
+                    continue;
+                }
+                if (adjBeforeLoot.value(node).size() < 2) {
+                    continue;
+                }
+                if (depthsForLootPass.value(node, -1) < 2) {
+                    continue;
+                }
+                if (zonesForLootPass.value(node, 0) != 2) {
+                    continue;
+                }
+                int score = depthsForLootPass[node] * 100 + adjBeforeLoot[node].size();
+                if (score > bestLootScore) {
+                    bestLootScore = score;
+                    lootRoomNode = node;
+                }
+            }
+
+            if (lootRoomNode >= 0) {
+                int keptNeighbour = -1;
+                int bestNeighbourDepth = std::numeric_limits<int>::max();
+                for (int neighbour : adjBeforeLoot.value(lootRoomNode)) {
+                    const int neighbourDepth = depthsForLootPass.value(neighbour, std::numeric_limits<int>::max());
+                    if (neighbourDepth < bestNeighbourDepth) {
+                        bestNeighbourDepth = neighbourDepth;
+                        keptNeighbour = neighbour;
+                    }
+                }
+
+                if (keptNeighbour >= 0) {
+                    for (int i = 0; i < plans.size(); ++i) {
+                        if (!plans[i].active) {
+                            continue;
+                        }
+                        const GraphEdge& e = plans[i].edge;
+                        const bool touchesLoot = (e.a == lootRoomNode || e.b == lootRoomNode);
+                        const bool isKeptEdge =
+                            (e.a == lootRoomNode && e.b == keptNeighbour)
+                            || (e.b == lootRoomNode && e.a == keptNeighbour);
+                        if (touchesLoot && !isKeptEdge) {
+                            plans[i].active = false;
+                        }
+                        if (isKeptEdge) {
+                            lootGatePlanIndex = i;
+                        }
+                    }
+                }
+
+                if (lootGatePlanIndex >= 0 && plans[lootGatePlanIndex].active) {
+                    plans[lootGatePlanIndex].lootGate = true;
+                    plans[lootGatePlanIndex].gatedRoom = lootRoomNode;
+                    lootRoomSpawned = true;
+                } else {
+                    lootRoomNode = -1;
+                }
+            }
+        }
+    }
+
+    QHash<int, EdgeDoorways> edgeDoorwaysByPlan;
+    QVector<GraphEdge> activeEdges;
+    for (int i = 0; i < plans.size(); ++i) {
+        if (!plans[i].active) {
+            continue;
+        }
+        const GraphEdge& e = plans[i].edge;
+        if (e.a < 0 || e.b < 0 || e.a >= chambers.size() || e.b >= chambers.size()) {
+            continue;
+        }
+        const bool horizontalFirst = (rng.bounded(100) + e.a * 11 + e.b * 17 + i * 5) % 2 == 0;
+        const QVector<QPoint> path = carveCorridorWithPath(level,
+                                                           chambers[e.a].centre(),
+                                                           chambers[e.b].centre(),
+                                                           horizontalFirst);
+        edgeDoorwaysByPlan.insert(i, resolveEdgeDoorways(path, chambers[e.a], chambers[e.b]));
+        activeEdges.push_back(e);
+    }
+
+    const QVector<QVector<int>> adj = buildAdjacency(chambers.size(), activeEdges);
     const int spawnNode = chooseSpawnNode(chambers, adj, tpl.mapW, tpl.mapH);
     const QPoint spawn = chambers[spawnNode].centre();
     level->setSpawn(spawn.x(), spawn.y());
@@ -1005,9 +1416,29 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
     const QVector<int> depths = bfsDepths(adj, spawnNode);
     const QVector<int> zones = zonesFromDepths(depths);
     QSet<int> riskySet;
-    for (int n : tpl.riskyNodes) riskySet.insert(n);
+    for (int n : tpl.riskyNodes) {
+        riskySet.insert(n);
+    }
 
-    const int treasureNode = chooseTreasureNode(depths, zones, riskySet, spawnNode);
+    int treasureNode = spawnNode;
+    int bestTreasureScore = std::numeric_limits<int>::min();
+    for (int i = 0; i < depths.size(); ++i) {
+        if (i == spawnNode || i == lootRoomNode || depths[i] < 0) {
+            continue;
+        }
+        int score = depths[i] * 100;
+        if (zones.value(i, 0) == 2) {
+            score += 40;
+        }
+        if (riskySet.contains(i)) {
+            score += 15;
+        }
+        if (score > bestTreasureScore) {
+            bestTreasureScore = score;
+            treasureNode = i;
+        }
+    }
+
     const QPoint treasurePos = chambers[treasureNode].centre();
     level->setTreasureRoom(new TreasureRoom(treasurePos.x(), treasurePos.y()));
 
@@ -1015,93 +1446,301 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
     occupied.insert(makeCellKey(spawn.x(), spawn.y()));
     occupied.insert(makeCellKey(treasurePos.x(), treasurePos.y()));
 
-    // Create gated shortcuts / release walls.
-    QHash<quint64, QPoint> gateCellByEdge;
-    QSet<quint64> hiddenWallsPlaced;
-    for (const GraphEdge& e : tpl.edges) {
-        if (!e.gated) continue;
-        const quint64 edgeKey = makePairKey(e.a, e.b);
-        const QVector<QPoint> path = edgePathCells.value(edgeKey);
-        const QPoint gate = pickGateCell(path, chambers[e.a], chambers[e.b]);
-        if (!level->isInBounds(gate.x(), gate.y())) continue;
+    struct PlacedGate {
+        int wallId = -1;
+        int planIndex = -1;
+        int gatedRoom = -1;
+        QPoint gateCell = QPoint(-1, -1);
+        bool lootGate = false;
+    };
+    QVector<PlacedGate> placedGates;
+    QHash<int, HiddenWall*> hiddenWallById;
+    int nextWallId = 0;
 
-        const quint64 cellKey = makeCellKey(gate.x(), gate.y());
-        if (hiddenWallsPlaced.contains(cellKey)) continue;
+    for (int i = 0; i < plans.size(); ++i) {
+        if (!plans[i].active || (!plans[i].generalGate && !plans[i].lootGate)) {
+            continue;
+        }
+        const GraphEdge& e = plans[i].edge;
+        if (plans[i].gatedRoom != e.a && plans[i].gatedRoom != e.b) {
+            continue;
+        }
+        const EdgeDoorways doors = edgeDoorwaysByPlan.value(i);
+        const QPoint gateCell = (plans[i].gatedRoom == e.a) ? doors.nearA : doors.nearB;
+        if (!isValidGateTile(level, gateCell)) {
+            qWarning() << "Invalid gate tile for plan" << i << "at" << gateCell;
+            continue;
+        }
 
-        level->setTileAt(gate.x(), gate.y(), static_cast<int>(CellType::HiddenWall));
-        level->setCollisionAt(gate.x(), gate.y(), true);
-        level->addHiddenWall(new HiddenWall(gate.x(), gate.y()));
+        level->setTileAt(gateCell.x(), gateCell.y(), static_cast<int>(CellType::HiddenWall));
+        level->setCollisionAt(gateCell.x(), gateCell.y(), true);
 
-        hiddenWallsPlaced.insert(cellKey);
-        gateCellByEdge.insert(edgeKey, gate);
-        occupied.insert(cellKey);
+        HiddenWall* hidden = new HiddenWall(gateCell.x(),
+                                            gateCell.y(),
+                                            nextWallId,
+                                            e.a,
+                                            e.b);
+        level->addHiddenWall(hidden);
+        hiddenWallById.insert(nextWallId, hidden);
+
+        PlacedGate placement;
+        placement.wallId = nextWallId;
+        placement.planIndex = i;
+        placement.gatedRoom = plans[i].gatedRoom;
+        placement.gateCell = gateCell;
+        placement.lootGate = plans[i].lootGate;
+        placedGates.push_back(placement);
+
+        occupied.insert(makeCellKey(gateCell.x(), gateCell.y()));
+        ++nextWallId;
     }
 
     QJsonArray clues;
     appendCoinClues(clues, difficultyTier);
 
-    // Multi-step environment interaction chains.
-    QVector<QVector<QPoint>> triggerOpenSets(qMax(1, tpl.triggerRooms.size()));
-    if (difficultyTier >= 2 && triggerOpenSets.size() >= 2) {
-        // Trigger A: first half of gated edges. Trigger B: second half.
-        int gatedCount = 0;
-        for (const GraphEdge& e : tpl.edges) if (e.gated) ++gatedCount;
-        const int split = (gatedCount + 1) / 2;
+    int nextTriggerId = 0;
+    auto reserveTriggerId = [&]() {
+        return nextTriggerId++;
+    };
 
-        int gatedIndex = 0;
-        for (const GraphEdge& e : tpl.edges) {
-            if (!e.gated) continue;
-            const QPoint gatePos = gateCellByEdge.value(makePairKey(e.a, e.b), QPoint(-1, -1));
-            if (!level->isInBounds(gatePos.x(), gatePos.y())) continue;
-            const int bucket = (gatedIndex < split) ? 0 : 1;
-            triggerOpenSets[bucket].push_back(gatePos);
-            ++gatedIndex;
+    bool strictLootRoomValid = lootRoomSpawned;
+    if (strictLootRoomValid) {
+        const bool isLateDepth = (lootRoomNode >= 0 && zones.value(lootRoomNode, 0) == 2);
+        const bool singleEntrance = (lootRoomNode >= 0 && adj.value(lootRoomNode).size() == 1);
+        bool hasLootGateWall = false;
+        for (const PlacedGate& gate : placedGates) {
+            if (gate.lootGate && gate.gatedRoom == lootRoomNode) {
+                hasLootGateWall = true;
+                break;
+            }
         }
-    } else {
-        for (const GraphEdge& e : tpl.edges) {
-            if (!e.gated) continue;
-            const QPoint gatePos = gateCellByEdge.value(makePairKey(e.a, e.b), QPoint(-1, -1));
-            if (level->isInBounds(gatePos.x(), gatePos.y())) {
-                triggerOpenSets[0].push_back(gatePos);
+        strictLootRoomValid = isLateDepth && singleEntrance && hasLootGateWall;
+        if (!strictLootRoomValid) {
+            qWarning() << "Loot room constraints not satisfied. Disabling loot-room specialization for this level."
+                       << "lateDepth=" << isLateDepth
+                       << "singleEntrance=" << singleEntrance
+                       << "hasLootHiddenWall=" << hasLootGateWall;
+        }
+    }
+    lootRoomSpawned = strictLootRoomValid;
+    if (!lootRoomSpawned) {
+        lootRoomNode = -1;
+    }
+
+    QVector<int> generalWallIds;
+    int lootWallId = -1;
+    QSet<int> gatedRooms;
+    for (const PlacedGate& gate : placedGates) {
+        gatedRooms.insert(gate.gatedRoom);
+        if (gate.lootGate && lootRoomSpawned) {
+            lootWallId = gate.wallId;
+        } else {
+            generalWallIds.push_back(gate.wallId);
+        }
+    }
+
+    QVector<int> triggerRoomCandidates = tpl.triggerRooms;
+    QVector<int> byDepth;
+    for (int i = 0; i < depths.size(); ++i) {
+        byDepth.push_back(i);
+    }
+    std::sort(byDepth.begin(), byDepth.end(), [&](int lhs, int rhs) {
+        if (depths.value(lhs, -1) != depths.value(rhs, -1)) {
+            return depths.value(lhs, -1) > depths.value(rhs, -1);
+        }
+        return lhs < rhs;
+    });
+    appendUnique(triggerRoomCandidates, byDepth);
+
+    if (!generalWallIds.isEmpty()) {
+        int generalTriggerCount = qMin(maxGeneralTriggers, generalWallIds.size());
+        generalTriggerCount = qMax(minGeneralTriggers, generalTriggerCount);
+        generalTriggerCount = qMin(generalTriggerCount, generalWallIds.size());
+
+        QVector<int> chosenGeneralRooms;
+        for (int node : triggerRoomCandidates) {
+            if (chosenGeneralRooms.size() >= generalTriggerCount) {
+                break;
+            }
+            if (node < 0 || node >= chambers.size()) {
+                continue;
+            }
+            if (node == spawnNode || node == treasureNode || node == lootRoomNode) {
+                continue;
+            }
+            if (!chosenGeneralRooms.contains(node)) {
+                chosenGeneralRooms.push_back(node);
+            }
+        }
+        if (chosenGeneralRooms.isEmpty() && !generalWallIds.isEmpty()) {
+            for (int node = 0; node < chambers.size(); ++node) {
+                if (node == lootRoomNode || node == treasureNode) {
+                    continue;
+                }
+                chosenGeneralRooms.push_back(node);
+                break;
+            }
+        }
+
+        QVector<QVector<int>> wallBuckets(chosenGeneralRooms.size());
+        for (int i = 0; i < generalWallIds.size(); ++i) {
+            if (wallBuckets.isEmpty()) {
+                break;
+            }
+            wallBuckets[i % wallBuckets.size()].push_back(generalWallIds.at(i));
+        }
+
+        for (int i = 0; i < chosenGeneralRooms.size(); ++i) {
+            if (wallBuckets.value(i).isEmpty()) {
+                continue;
+            }
+            const int roomIdx = chosenGeneralRooms.at(i);
+            const QPoint triggerPos = pickPointInChamber(chambers[roomIdx], rng, occupied, 1);
+            if (!level->isInBounds(triggerPos.x(), triggerPos.y())) {
+                continue;
+            }
+
+            const int triggerId = reserveTriggerId();
+            level->addTriggerWall(new TriggerWall(triggerPos.x(),
+                                                  triggerPos.y(),
+                                                  triggerId,
+                                                  wallBuckets[i]));
+            occupied.insert(makeCellKey(triggerPos.x(), triggerPos.y()));
+
+            for (int wallId : wallBuckets[i]) {
+                HiddenWall* wall = hiddenWallById.value(wallId, nullptr);
+                if (wall) {
+                    wall->addRequiredTriggerId(triggerId);
+                }
+            }
+
+            const QPoint cluePos = pickPointInChamber(chambers[roomIdx], rng, occupied, 1);
+            if (level->isInBounds(cluePos.x(), cluePos.y())) {
+                const QString hintText = QStringLiteral("A pressure plate here controls one or more hidden walls.");
+                level->addClueTrigger(new ClueTrigger(cluePos.x(), cluePos.y(), hintText));
+                clues.append(makePositionClue(cluePos, hintText));
+                occupied.insert(makeCellKey(cluePos.x(), cluePos.y()));
             }
         }
     }
 
-    for (int i = 0; i < tpl.triggerRooms.size(); ++i) {
-        if (i >= triggerOpenSets.size()) break;
-        const int roomIdx = tpl.triggerRooms[i];
-        if (roomIdx < 0 || roomIdx >= chambers.size()) continue;
-        if (triggerOpenSets[i].isEmpty()) continue;
+    if (lootWallId >= 0 && lootRoomNode >= 0) {
+        QVector<int> lootTriggerRooms;
+        QVector<int> candidates = byDepth;
+        const int minDistance = qMax(6, (tpl.mapW + tpl.mapH) / 8);
 
-        const QPoint triggerPos = pickPointInChamber(chambers[roomIdx], rng, occupied, 1);
-        if (!level->isInBounds(triggerPos.x(), triggerPos.y())) continue;
-
-        level->addTriggerWall(new TriggerWall(triggerPos.x(), triggerPos.y(), triggerOpenSets[i]));
-        occupied.insert(makeCellKey(triggerPos.x(), triggerPos.y()));
-
-        const QPoint cluePos = pickPointInChamber(chambers[roomIdx], rng, occupied, 1);
-        if (level->isInBounds(cluePos.x(), cluePos.y())) {
-            const QString hintText = (difficultyTier >= 2)
-                ? QString("A pressure plate here will reshape routes and unleash sealed threats.")
-                : QString("This chamber hides a shortcut trigger, but opening it may free danger.");
-            level->addClueTrigger(new ClueTrigger(cluePos.x(), cluePos.y(), hintText));
-            clues.append(makePositionClue(cluePos, hintText));
-            occupied.insert(makeCellKey(cluePos.x(), cluePos.y()));
+        for (int node : candidates) {
+            if (lootTriggerRooms.size() >= lootTriggerCountRequired) {
+                break;
+            }
+            if (node < 0 || node >= chambers.size()) {
+                continue;
+            }
+            if (node == lootRoomNode || node == spawnNode || node == treasureNode) {
+                continue;
+            }
+            bool farEnough = true;
+            for (int picked : lootTriggerRooms) {
+                const QPoint a = chambers[picked].centre();
+                const QPoint b = chambers[node].centre();
+                const int manhattan = qAbs(a.x() - b.x()) + qAbs(a.y() - b.y());
+                if (manhattan < minDistance) {
+                    farEnough = false;
+                    break;
+                }
+            }
+            if (farEnough) {
+                lootTriggerRooms.push_back(node);
+            }
         }
+        for (int node : candidates) {
+            if (lootTriggerRooms.size() >= lootTriggerCountRequired) {
+                break;
+            }
+            if (node < 0 || node >= chambers.size()) {
+                continue;
+            }
+            if (node == lootRoomNode || node == spawnNode || node == treasureNode) {
+                continue;
+            }
+            if (!lootTriggerRooms.contains(node)) {
+                lootTriggerRooms.push_back(node);
+            }
+        }
+
+        QVector<int> linkedLootTriggers;
+        for (int roomIdx : lootTriggerRooms) {
+            if (linkedLootTriggers.size() >= lootTriggerCountRequired) {
+                break;
+            }
+            const QPoint triggerPos = pickPointInChamber(chambers[roomIdx], rng, occupied, 1);
+            if (!level->isInBounds(triggerPos.x(), triggerPos.y())) {
+                continue;
+            }
+            const int triggerId = reserveTriggerId();
+            level->addTriggerWall(new TriggerWall(triggerPos.x(),
+                                                  triggerPos.y(),
+                                                  triggerId,
+                                                  QVector<int>{lootWallId}));
+            linkedLootTriggers.push_back(triggerId);
+            occupied.insert(makeCellKey(triggerPos.x(), triggerPos.y()));
+        }
+        if (linkedLootTriggers.size() < lootTriggerCountRequired) {
+            for (int roomIdx : byDepth) {
+                if (linkedLootTriggers.size() >= lootTriggerCountRequired) {
+                    break;
+                }
+                if (roomIdx < 0 || roomIdx >= chambers.size()) {
+                    continue;
+                }
+                if (roomIdx == lootRoomNode || roomIdx == spawnNode || roomIdx == treasureNode) {
+                    continue;
+                }
+                if (lootTriggerRooms.contains(roomIdx)) {
+                    continue;
+                }
+                const QPoint triggerPos = pickPointInChamber(chambers[roomIdx], rng, occupied, 0);
+                if (!level->isInBounds(triggerPos.x(), triggerPos.y())) {
+                    continue;
+                }
+                const int triggerId = reserveTriggerId();
+                level->addTriggerWall(new TriggerWall(triggerPos.x(),
+                                                      triggerPos.y(),
+                                                      triggerId,
+                                                      QVector<int>{lootWallId}));
+                linkedLootTriggers.push_back(triggerId);
+                occupied.insert(makeCellKey(triggerPos.x(), triggerPos.y()));
+            }
+        }
+
+        HiddenWall* lootWall = hiddenWallById.value(lootWallId, nullptr);
+        if (lootWall) {
+            lootWall->setRequiredTriggerIds(linkedLootTriggers);
+        }
+
+        lootRoomSpawned = (linkedLootTriggers.size() >= lootTriggerCountRequired);
+        if (!lootRoomSpawned) {
+            qWarning() << "Loot room gate could not be assigned the required trigger count:"
+                       << lootTriggerCountRequired << "(assigned" << linkedLootTriggers.size() << ")";
+        }
+    } else {
+        lootRoomSpawned = false;
     }
 
-    // Smart coin placement: reward dead-ends first, then risky and late zones.
     QVector<int> deadEnds;
     for (int i = 0; i < adj.size(); ++i) {
-        if (adj[i].size() == 1) deadEnds.push_back(i);
+        if (adj[i].size() == 1) {
+            deadEnds.push_back(i);
+        }
     }
-
     QVector<int> lateNodes;
     for (int i = 0; i < zones.size(); ++i) {
-        if (zones[i] == 2) lateNodes.push_back(i);
+        if (zones[i] == 2) {
+            lateNodes.push_back(i);
+        }
     }
     std::sort(lateNodes.begin(), lateNodes.end(), [&](int lhs, int rhs) {
-        return depths[lhs] > depths[rhs];
+        return depths.value(lhs, -1) > depths.value(rhs, -1);
     });
 
     QVector<int> coinPriority;
@@ -1109,30 +1748,68 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
     appendUnique(coinPriority, deadEnds);
     appendUnique(coinPriority, tpl.riskyNodes);
     appendUnique(coinPriority, lateNodes);
-    for (int i = 0; i < chambers.size(); ++i) appendUnique(coinPriority, i);
+    for (int i = 0; i < chambers.size(); ++i) {
+        appendUnique(coinPriority, i);
+    }
 
     int coinsPlaced = 0;
     for (int node : coinPriority) {
-        if (coinsPlaced >= tpl.coinTarget) break;
-        if (node == spawnNode || node == treasureNode) continue;
-        if (node < 0 || node >= chambers.size()) continue;
+        if (coinsPlaced >= tpl.coinTarget) {
+            break;
+        }
+        if (node == spawnNode || node == treasureNode || node == lootRoomNode) {
+            continue;
+        }
+        if (node < 0 || node >= chambers.size()) {
+            continue;
+        }
 
         const QPoint p = pickPointInChamber(chambers[node], rng, occupied, 1);
-        if (!level->isInBounds(p.x(), p.y())) continue;
-
+        if (!level->isInBounds(p.x(), p.y())) {
+            continue;
+        }
         level->addCoin(new Coin(p.x(), p.y(), 100));
         occupied.insert(makeCellKey(p.x(), p.y()));
         ++coinsPlaced;
     }
 
-    // Strategic enemy placement: junctions, chokepoints, trap releases, and late pressure nodes.
+    if (lootRoomSpawned && lootRoomNode >= 0) {
+        QVector<QPoint> lootCandidates;
+        const Chamber& lootChamber = chambers[lootRoomNode];
+        for (int y = lootChamber.y + 1; y < lootChamber.y + lootChamber.height - 1; ++y) {
+            for (int x = lootChamber.x + 1; x < lootChamber.x + lootChamber.width - 1; ++x) {
+                const quint64 key = makeCellKey(x, y);
+                if (!occupied.contains(key)) {
+                    lootCandidates.push_back(QPoint(x, y));
+                }
+            }
+        }
+        for (int i = lootCandidates.size() - 1; i > 0; --i) {
+            const int j = rng.bounded(i + 1);
+            std::swap(lootCandidates[i], lootCandidates[j]);
+        }
+        if (lootCandidates.size() < 3) {
+            qWarning() << "Loot room selected but insufficient floor cells for exactly 3 coins.";
+        }
+        const int lootCoins = qMin(3, lootCandidates.size());
+        for (int i = 0; i < lootCoins; ++i) {
+            const QPoint p = lootCandidates.at(i);
+            level->addCoin(new Coin(p.x(), p.y(), 100));
+            occupied.insert(makeCellKey(p.x(), p.y()));
+        }
+    }
+
     QVector<int> junctionNodes;
     for (int i = 0; i < adj.size(); ++i) {
-        if (adj[i].size() >= 3) junctionNodes.push_back(i);
+        if (adj[i].size() >= 3) {
+            junctionNodes.push_back(i);
+        }
     }
     std::sort(junctionNodes.begin(), junctionNodes.end(), [&](int lhs, int rhs) {
-        if (zones[lhs] != zones[rhs]) return zones[lhs] > zones[rhs];
-        return adj[lhs].size() > adj[rhs].size();
+        if (zones.value(lhs, 0) != zones.value(rhs, 0)) {
+            return zones.value(lhs, 0) > zones.value(rhs, 0);
+        }
+        return adj.value(lhs).size() > adj.value(rhs).size();
     });
 
     QVector<int> enemyPriority;
@@ -1140,23 +1817,52 @@ Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* out
     appendUnique(enemyPriority, tpl.trapDeadEnds);
     appendUnique(enemyPriority, tpl.riskyNodes);
     appendUnique(enemyPriority, lateNodes);
-    for (int i = 0; i < chambers.size(); ++i) appendUnique(enemyPriority, i);
+    for (int i = 0; i < chambers.size(); ++i) {
+        appendUnique(enemyPriority, i);
+    }
 
     int enemiesPlaced = 0;
     for (int node : enemyPriority) {
-        if (enemiesPlaced >= tpl.enemyTarget) break;
-        if (node == spawnNode || node == treasureNode) continue;
-        if (node < 0 || node >= chambers.size()) continue;
+        if (enemiesPlaced >= tpl.enemyTarget) {
+            break;
+        }
+        if (node == spawnNode || node == treasureNode || node == lootRoomNode) {
+            continue;
+        }
+        if (node < 0 || node >= chambers.size()) {
+            continue;
+        }
 
         const QPoint p = pickPointInChamber(chambers[node], rng, occupied, 1);
-        if (!level->isInBounds(p.x(), p.y())) continue;
-
+        if (!level->isInBounds(p.x(), p.y())) {
+            continue;
+        }
         level->addEnemy(new Enemy(p.x(), p.y()));
         occupied.insert(makeCellKey(p.x(), p.y()));
         ++enemiesPlaced;
     }
 
-    if (outClues) *outClues = clues;
+    for (int gatedRoom : gatedRooms) {
+        const int degree = adj.value(gatedRoom).size();
+        if (degree != 1) {
+            qWarning() << "Graph integrity failed: gated room" << gatedRoom
+                       << "has degree" << degree << "(expected 1)";
+        }
+    }
+    for (int node = 0; node < depths.size(); ++node) {
+        if (depths[node] < 0) {
+            qWarning() << "Graph integrity warning: node" << node << "is unreachable from spawn";
+        }
+    }
+
+    level->validateTriggerWallConsistency();
+
+    if (outLootRoomSpawned) {
+        *outLootRoomSpawned = lootRoomSpawned;
+    }
+    if (outClues) {
+        *outClues = clues;
+    }
     return level;
 }
 
@@ -1166,7 +1872,30 @@ QStringList LevelLoader::getAvailableLevels(const QString& levelsDir)
     const QStringList files = dir.entryList(QStringList() << "*.json", QDir::Files, QDir::Name);
     QStringList result;
     result.reserve(files.size());
-    for (const QString& file : files)
-        result.push_back(dir.absoluteFilePath(file));
+    for (const QString& file : files) {
+        const QString absPath = dir.absoluteFilePath(file);
+        QFile levelFile(absPath);
+        if (!levelFile.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(levelFile.readAll(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+            continue;
+        }
+        const QJsonObject root = doc.object();
+        const bool isChamberLevel = root.value("format").toString() == "chambers"
+                                    && root.value("chambers").isArray()
+                                    && root.value("corridors").isArray();
+        const bool isLegacyLevel = root.value("width").isDouble()
+                                   && root.value("height").isDouble()
+                                   && (root.value("tiles").isArray()
+                                       || root.value("walls").isArray()
+                                       || root.value("hiddenWalls").isArray()
+                                       || root.value("triggerWalls").isArray());
+        if (isChamberLevel || isLegacyLevel) {
+            result.push_back(absPath);
+        }
+    }
     return result;
 }

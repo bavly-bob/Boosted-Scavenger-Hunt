@@ -41,5 +41,6 @@ enum class CellType {
     ClueTrigger,
     Player,
     Corridor,
-    Chamber
+    Chamber,
+    OpenedSecretFloor
 };
