@@ -23,6 +23,7 @@ class Game : public QObject {
     Difficulty m_difficulty;
 
     int m_score;
+    int m_highScore;
     int m_timeRemaining;
     int m_currentLevelIndex;
     quint32 m_runSeedBase;
@@ -56,6 +57,7 @@ public:
     GameState state() const;
     Difficulty difficulty() const;
     int score() const;
+    int highScore() const;
     int timeRemaining() const;
     int currentLevelIndex() const;
     QString currentLevelName() const;
@@ -76,4 +78,7 @@ signals:
 
 private slots:
     void onTick();
+
+private:
+    void endRunWithFailure();
 };

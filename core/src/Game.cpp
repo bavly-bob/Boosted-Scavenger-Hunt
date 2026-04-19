@@ -35,6 +35,7 @@ Game::Game(QObject* parent)
       m_state(GameState::START),
       m_difficulty(Difficulty::NORMAL),
       m_score(0),
+      m_highScore(0),
       m_timeRemaining(0),
       m_currentLevelIndex(0),
       m_runSeedBase(0),
@@ -67,9 +68,10 @@ void Game::startNewGame(Difficulty diff)
 
 void Game::startLevel(int levelIndex, Difficulty diff)
 {
-    if (levelIndex < 0 || levelIndex >= m_levelFiles.size()) {
+    if (levelIndex < 0) {
         return;
     }
+    const bool hasStaticLevel = levelIndex < m_levelFiles.size();
 
     m_timer->stop();
 
@@ -79,12 +81,19 @@ void Game::startLevel(int levelIndex, Difficulty diff)
 
     QJsonArray clues;
     if (m_difficulty == Difficulty::EASY) {
-        m_currentLevel.reset(LevelLoader::loadFromJson(m_levelFiles.at(levelIndex), &clues));
+        if (hasStaticLevel) {
+            m_currentLevel.reset(LevelLoader::loadFromJson(m_levelFiles.at(levelIndex), &clues));
+        } else {
+            quint32 seed = m_runSeedBase;
+            seed ^= static_cast<quint32>(levelIndex + 1) * 0x9e3779b9u;
+            seed ^= 0x13579bdfu;
+            m_currentLevel.reset(LevelLoader::generateProcedural(static_cast<int>(seed), 0, &clues));
+        }
     } else {
         quint32 seed = m_runSeedBase;
         seed ^= static_cast<quint32>(levelIndex + 1) * 0x9e3779b9u;
         seed ^= static_cast<quint32>(m_difficulty == Difficulty::HARD ? 2 : 1) * 0x85ebca6bu;
-        const QString& anchor = m_levelFiles.at(levelIndex);
+        const QString anchor = hasStaticLevel ? m_levelFiles.at(levelIndex) : QStringLiteral("procedural");
         for (QChar ch : anchor) {
             seed = seed * 33u + static_cast<quint32>(ch.unicode());
         }
@@ -93,7 +102,7 @@ void Game::startLevel(int levelIndex, Difficulty diff)
         m_currentLevel.reset(LevelLoader::generateProcedural(static_cast<int>(seed), proceduralDifficulty, &clues));
 
         // Fallback path if procedural generation fails for any reason.
-        if (!m_currentLevel) {
+        if (!m_currentLevel && hasStaticLevel) {
             m_currentLevel.reset(LevelLoader::loadFromJson(m_levelFiles.at(levelIndex), &clues));
         }
     }
@@ -121,10 +130,18 @@ void Game::startLevel(int levelIndex, Difficulty diff)
 
 void Game::nextLevel()
 {
-    if (m_currentLevelIndex + 1 >= m_levelFiles.size()) {
+    if (m_difficulty == Difficulty::EASY) {
+        startLevel(m_currentLevelIndex + 1, m_difficulty);
         return;
     }
-    startLevel(m_currentLevelIndex + 1, m_difficulty);
+
+    if (m_levelFiles.isEmpty()) {
+        startLevel(m_currentLevelIndex + 1, m_difficulty);
+        return;
+    }
+
+    const int nextIndex = (m_currentLevelIndex + 1) % m_levelFiles.size();
+    startLevel(nextIndex, m_difficulty);
 }
 
 void Game::restartLevel()
@@ -138,6 +155,7 @@ void Game::saveGame(const QString& filepath)
     root["levelIndex"] = m_currentLevelIndex;
     root["difficulty"] = static_cast<int>(m_difficulty);
     root["score"] = m_score;
+    root["highScore"] = m_highScore;
     root["seedBase"] = static_cast<qint64>(m_runSeedBase);
 
     QJsonDocument doc(root);
@@ -164,6 +182,7 @@ bool Game::loadGame(const QString& filepath)
     int levelIndex = root["levelIndex"].toInt(0);
     int diffInt = root["difficulty"].toInt(1);
     m_score = root["score"].toInt(0);
+    m_highScore = root["highScore"].toInt(m_score);
     m_runSeedBase = static_cast<quint32>(root["seedBase"].toDouble(0.0));
     if (m_runSeedBase == 0u) {
         m_runSeedBase = QRandomGenerator::global()->generate();
@@ -227,10 +246,7 @@ void Game::handleInput(Direction dir)
 
     for (Enemy* enemy : m_currentLevel->getEnemies()) {
         if (!enemy->isDead() && enemy->getX() == newPos.x() && enemy->getY() == newPos.y()) {
-            m_state = GameState::GAME_OVER;
-            m_timer->stop();
-            emit gameUpdated();
-            emit gameOver(false, m_score);
+            endRunWithFailure();
             return;
         }
     }
@@ -238,6 +254,9 @@ void Game::handleInput(Direction dir)
     InteractionResult interaction = m_currentLevel->interactAt(newPos.x(), newPos.y(), *m_player, *m_clueManager);
     if (interaction.scoreDelta != 0) {
         m_score += interaction.scoreDelta;
+        if (m_score > m_highScore) {
+            m_highScore = m_score;
+        }
     }
     if (interaction.coinCollected) {
         emit coinCollected(interaction.coinsCollectedTotal);
@@ -270,6 +289,16 @@ void Game::handleInput(Direction dir)
         emit treasureUnlocked();
     }
     if (interaction.won) {
+        if (m_score > m_highScore) {
+            m_highScore = m_score;
+        }
+
+        if (m_difficulty != Difficulty::EASY) {
+            emit clueRevealed("Depth cleared. Descending...");
+            nextLevel();
+            return;
+        }
+
         m_state = GameState::WIN;
         m_timer->stop();
         emit gameUpdated();
@@ -313,6 +342,11 @@ Difficulty Game::difficulty() const
 int Game::score() const
 {
     return m_score;
+}
+
+int Game::highScore() const
+{
+    return m_highScore;
 }
 
 int Game::timeRemaining() const
@@ -362,10 +396,7 @@ void Game::onTick()
             enemy->update(*m_currentLevel, *m_player);
 
             if (!enemy->isDead() && m_player && enemy->getX() == m_player->getX() && enemy->getY() == m_player->getY()) {
-                m_state = GameState::GAME_OVER;
-                m_timer->stop();
-                emit gameUpdated();
-                emit gameOver(false, m_score);
+                endRunWithFailure();
                 return;
             }
         }
@@ -381,12 +412,26 @@ void Game::onTick()
     emit timerTick(m_timeRemaining);
 
     if (m_timeRemaining == 0) {
-        m_state = GameState::GAME_OVER;
-        m_timer->stop();
-        emit gameUpdated();
-        emit gameOver(false, m_score);
+        endRunWithFailure();
         return;
     }
 
     emit gameUpdated();
+}
+
+void Game::endRunWithFailure()
+{
+    m_state = GameState::GAME_OVER;
+    m_timer->stop();
+
+    const int finalScore = m_score;
+    if (finalScore > m_highScore) {
+        m_highScore = finalScore;
+    }
+
+    emit gameUpdated();
+    emit gameOver(false, finalScore);
+
+    // New run begins from zero after death.
+    m_score = 0;
 }

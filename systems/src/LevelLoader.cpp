@@ -557,7 +557,39 @@ DifficultyTemplate buildTemplate(int difficultyTier)
         t.edges.push_back(e);
     };
 
-    if (difficultyTier >= 2) {
+    if (difficultyTier <= 0) {
+        t.name = "Generated Easy Caves";
+        t.mapW = 46;
+        t.mapH = 32;
+        t.timeLimit = 170;
+        t.coinTarget = 4;
+        t.enemyTarget = 2;
+
+        t.anchors = {
+            {0.48, 0.50}, // 0 spawn hub
+            {0.28, 0.40}, // 1 west route
+            {0.62, 0.38}, // 2 east route
+            {0.18, 0.24}, // 3 reward dead-end + trigger room
+            {0.44, 0.68}, // 4 lower route
+            {0.78, 0.62}, // 5 treasure side
+            {0.20, 0.76}, // 6 reward dead-end
+            {0.74, 0.24}  // 7 enemy pen
+        };
+
+        addEdge(0, 1); addEdge(0, 2);
+        addEdge(1, 4); addEdge(2, 4);
+        addEdge(2, 5); addEdge(4, 5);
+        addEdge(1, 3); addEdge(4, 6);
+
+        // Optional shortcut + optional danger release.
+        addEdge(1, 5, true, true);
+        addEdge(2, 7, true, false);
+
+        t.rewardDeadEnds = {3, 6};
+        t.trapDeadEnds = {7};
+        t.triggerRooms = {3};
+        t.riskyNodes = {2, 5, 7};
+    } else if (difficultyTier >= 2) {
         t.name = "Generated Hard Labyrinth";
         t.mapW = 74;
         t.mapH = 52;
@@ -928,13 +960,7 @@ void appendCoinClues(QJsonArray& clues, int difficultyTier)
 
 Level* LevelLoader::generateProcedural(int seed, int difficulty, QJsonArray* outClues)
 {
-    // EASY should use existing handcrafted levels only.
-    if (difficulty <= 0) {
-        if (outClues) *outClues = QJsonArray();
-        return nullptr;
-    }
-
-    const int difficultyTier = (difficulty >= 2) ? 2 : 1;
+    const int difficultyTier = (difficulty <= 0) ? 0 : (difficulty >= 2) ? 2 : 1;
     const DifficultyTemplate tpl = buildTemplate(difficultyTier);
     QRandomGenerator rng(static_cast<quint32>(seed));
 

@@ -665,6 +665,7 @@ void GameWindow::paintEvent(QPaintEvent *event)
 
         const QString levelName = m_game->currentLevelName();
         const QString scoreText = QString("Score: %1").arg(m_game->score());
+        const QString highScoreText = QString("High: %1").arg(m_game->highScore());
         const int coins = m_game->coinsCollected();
         const QString timeText = formatTime(m_game->timeRemaining());
         QFont titleFont = p.font();
@@ -682,6 +683,8 @@ void GameWindow::paintEvent(QPaintEvent *event)
         p.setFont(infoFont);
         p.setPen(QColor(180, 220, 180));
         p.drawText(QRect(12, 32, 160, 18), Qt::AlignLeft | Qt::AlignVCenter, scoreText);
+        p.setPen(QColor(205, 190, 235));
+        p.drawText(QRect(170, 32, 140, 18), Qt::AlignLeft | Qt::AlignVCenter, highScoreText);
         const int coinX = width() / 2 - 60;
         p.setPen(QColor(200, 200, 200));
         p.drawText(QRect(coinX, 32, 120, 18), Qt::AlignLeft | Qt::AlignVCenter, "Coins: ");
@@ -1063,7 +1066,10 @@ void GameWindow::onTreasureUnlocked()
 void GameWindow::onGameOver(bool won, int score)
 {
     hidePauseOverlay();
-    const bool hasNext = won && (m_game->currentLevelIndex() + 1 < m_game->levelCount());
+    const bool hasNext = won && (
+        m_game->difficulty() == Difficulty::EASY
+        || (m_game->currentLevelIndex() + 1 < m_game->levelCount())
+    );
     m_gameOverOverlay->setResult(won, score, hasNext);
     m_gameOverOverlay->setGeometry(rect());
     m_gameOverOverlay->show();
