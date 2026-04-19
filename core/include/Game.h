@@ -51,6 +51,12 @@ public:
     int levelCount() const;
 
     void startNewGame(Difficulty diff);
+
+    // Multiplayer stubs
+    void startMultiplayerMode();
+    void hostMultiplayerSession(int port);
+    void joinMultiplayerSession(const QString& host, int port);
+
     void startLevel(int levelIndex, Difficulty diff);
     void nextLevel();
     void restartLevel();

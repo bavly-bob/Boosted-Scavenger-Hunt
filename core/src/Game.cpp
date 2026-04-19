@@ -92,6 +92,21 @@ void Game::startNewGame(Difficulty diff)
     startLevel(0, diff);
 }
 
+void Game::startMultiplayerMode()
+{
+    // TODO: Initialize client connection and transition to multiplayer game state
+}
+
+void Game::hostMultiplayerSession(int port)
+{
+    // TODO: Start server, listen on port, wait for peer to join
+}
+
+void Game::joinMultiplayerSession(const QString& host, int port)
+{
+    // TODO: Connect client to host and sync game state
+}
+
 void Game::startLevel(int levelIndex, Difficulty diff)
 {
     if (levelIndex < 0) {

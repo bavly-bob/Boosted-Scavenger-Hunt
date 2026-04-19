@@ -58,6 +58,7 @@ MainMenu::MainMenu(QWidget *parent)
     QPushButton *easy   = createButton("EASY",   QColor(80, 200, 120));
     QPushButton *medium = createButton("MEDIUM", QColor(230, 180,  60));
     QPushButton *hard   = createButton("HARD",   QColor(220,  80,  70));
+    QPushButton *multiplayer = createButton("MULTIPLAYER", QColor(150, 100, 200));
     
     m_continueBtn = createButton("CONTINUE", QColor(60, 120, 200));
     btnLayout->addWidget(m_continueBtn, 0, Qt::AlignCenter);
@@ -68,12 +69,14 @@ MainMenu::MainMenu(QWidget *parent)
     btnLayout->addWidget(easy,   0, Qt::AlignCenter);
     btnLayout->addWidget(medium, 0, Qt::AlignCenter);
     btnLayout->addWidget(hard,   0, Qt::AlignCenter);
+    btnLayout->addWidget(multiplayer, 0, Qt::AlignCenter);
     btnLayout->addWidget(quit,   0, Qt::AlignCenter);
     layout->addLayout(btnLayout);
 
     connect(easy,   &QPushButton::clicked, this, [this]{ emit difficultySelected(0); });
     connect(medium, &QPushButton::clicked, this, [this]{ emit difficultySelected(1); });
     connect(hard,   &QPushButton::clicked, this, [this]{ emit difficultySelected(2); });
+    connect(multiplayer, &QPushButton::clicked, this, [this]{ emit multiplayerRequested(); });
     connect(quit,   &QPushButton::clicked, this, [this]{ emit quitRequested(); });
 
     layout->addSpacerItem(new QSpacerItem(0, 25, QSizePolicy::Minimum, QSizePolicy::Expanding));

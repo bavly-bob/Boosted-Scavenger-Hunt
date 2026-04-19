@@ -14,6 +14,7 @@ public:
 signals:
     void difficultySelected(int difficulty);
     void continueRequested();
+    void multiplayerRequested();
     void quitRequested();
 
 protected:
