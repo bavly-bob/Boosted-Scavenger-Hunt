@@ -313,6 +313,7 @@ void Game::handleInput(Direction dir)
 
     QString blockedReason;
     if (!m_currentLevel->canPlayerEnter(targetX, targetY, *m_player, &blockedReason)) {
+        // Put your sound here
         if (!blockedReason.isEmpty() && blockedReason.contains("locked", Qt::CaseInsensitive)) {
             emit clueRevealed(blockedReason);
             emit gameUpdated();
@@ -342,6 +343,7 @@ void Game::handleInput(Direction dir)
         }
     }
     if (interaction.coinCollected) {
+        // Put your sound here
         emit coinCollected(interaction.coinsCollectedTotal);
     }
     bool clueShownThisStep = false;
@@ -364,14 +366,18 @@ void Game::handleInput(Direction dir)
         }
     }
     if (interaction.wallOpened) {
+        // Put your sound here
         emit wallOpened();
     } else if (interaction.triggerActivated && !clueShownThisStep) {
+        // Put your sound here
         emit clueRevealed("The pressure plate clicks, but no nearby wall moved.");
     }
     if (interaction.treasureUnlocked && !clueShownThisStep) {
+        // Put your sound here
         emit treasureUnlocked();
     }
-    if (interaction.won) {
+    if (interaction.won) { // hint an enemy
+        // Put your sound here
         if (m_score > m_highScore) {
             m_highScore = m_score;
         }
@@ -517,6 +523,7 @@ void Game::onTick()
 
 void Game::endRunWithFailure()
 {
+    // Put your sound here
     m_state = GameState::GAME_OVER;
     m_timer->stop();
 
