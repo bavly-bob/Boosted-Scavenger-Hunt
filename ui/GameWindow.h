@@ -77,9 +77,9 @@ private:
     bool     m_statusIsAiHint;
 
     static constexpr int    HUD_HEIGHT             = 96;
-    static constexpr int    TILE_SIZE               = 32;
-    static constexpr int    VIEWPORT_WIDTH          = 800;
-    static constexpr int    VIEWPORT_HEIGHT         = 600;
+    static constexpr int    TILE_SIZE               = 48;
+    static constexpr int    VIEWPORT_WIDTH          = 1024;
+    static constexpr int    VIEWPORT_HEIGHT         = 1024;
     static constexpr qreal  CAMERA_LERP             = 0.18;
     static constexpr int    VISIBILITY_RADIUS_TILES = 6;
 };
