@@ -13,6 +13,7 @@ class QTimer;
 class Game;
 class GameOverOverlay;
 class PauseOverlay;
+class QPushButton;
 
 class GameWindow : public QWidget
 {
@@ -50,6 +51,11 @@ private:
     void injectSprites();
     void resetExplored();
 
+    int hudHeight() const;
+    void layoutHudButtons();
+    float statusOpacity() const;
+    void drawMiniMap(QPainter& p) const;
+
     Game*             m_game;
     PauseOverlay*     m_pauseOverlay;
     GameOverOverlay*  m_gameOverOverlay;
@@ -76,12 +82,22 @@ private:
     bool     m_assetsLoaded;
     bool     m_statusIsAiHint;
 
-    static constexpr int    HUD_HEIGHT             = 96;
-    static constexpr int    TILE_SIZE               = 48;
-    static constexpr int    VIEWPORT_WIDTH          = 1024;
-    static constexpr int    VIEWPORT_HEIGHT         = 1024;
+    QPushButton* m_hudRestartBtn;
+    QPushButton* m_hudQuitBtn;
+
+    QElapsedTimer m_statusTimer;
+    int m_statusDurationMs;
+
+    int m_prevCoins;
+    QElapsedTimer m_coinPopTimer;
+    QElapsedTimer m_objectiveFlashTimer;
+    bool m_objectiveFlashActive;
+
+    static constexpr int    TILE_SIZE               = 64;
     static constexpr qreal  CAMERA_LERP             = 0.18;
     static constexpr int    VISIBILITY_RADIUS_TILES = 6;
+    static constexpr int    MINIMAP_SIZE            = 160;
+    static constexpr int    MINIMAP_CELL            = 3;
 };
 
 #endif // GAMEWINDOW_H

@@ -11,8 +11,8 @@ MainMenu::MainMenu(QWidget *parent)
     : QWidget(parent), m_continueBtn(nullptr)
 {
     setWindowTitle("Scavenger Hunt");
-    resize(550, 620);
-    setMinimumSize(450, 500);
+    resize(550, 720);
+    setMinimumSize(450, 600);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(40, 60, 40, 35);
@@ -53,7 +53,7 @@ MainMenu::MainMenu(QWidget *parent)
              "letter-spacing: 5px; padding-bottom: 12px;");
 
     QVBoxLayout *btnLayout = new QVBoxLayout;
-    btnLayout->setSpacing(12);
+    btnLayout->setSpacing(36);
 
     QPushButton *easy   = createButton("EASY",   QColor(80, 200, 120));
     QPushButton *medium = createButton("MEDIUM", QColor(230, 180,  60));
