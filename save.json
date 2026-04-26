@@ -1,13 +1,13 @@
 {
-    "difficulty": 1,
-    "difficultyProfileId": "normal_standard",
+    "difficulty": 2,
+    "difficultyProfileId": "hard_brutal",
     "highScore": 1700,
     "levelIndex": 0,
-    "levelTimeSeconds": 31,
+    "levelTimeSeconds": 8,
     "lootRoomsSpawned": 0,
-    "runIndex": 1,
-    "runTimeSeconds": 184,
-    "score": 1700,
-    "seedBase": 1591892061,
-    "timeRemaining": 21
+    "runIndex": 3,
+    "runTimeSeconds": 8,
+    "score": 0,
+    "seedBase": 4252336935,
+    "timeRemaining": 162
 }

@@ -15,6 +15,7 @@ endif()
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Multimedia)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Multimedia)
+find_package(Boost 1.89.0 REQUIRED CONFIG)
 
 set(PROJECT_SOURCES
         main.cpp
@@ -65,7 +66,11 @@ else()
     endif()
 endif()
 
-target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Multimedia)
+if(WIN32)
+    target_link_libraries(ScavengerHunt PRIVATE ws2_32 mswsock)
+endif()
+
+target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Multimedia Boost::headers)
 target_include_directories(ScavengerHunt PRIVATE . core/include gameplay/include systems/include utils ui)
 
 add_custom_command(TARGET ScavengerHunt POST_BUILD
@@ -75,9 +80,6 @@ add_custom_command(TARGET ScavengerHunt POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:ScavengerHunt>/assets"
 )
 
-# Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
-# If you are developing for iOS or macOS you should consider setting an
-# explicit, fixed bundle identifier manually though.
 if(${QT_VERSION} VERSION_LESS 6.1.0)
   set(BUNDLE_ID_OPTION MACOSX_BUNDLE_GUI_IDENTIFIER com.example.ScavengerHunt)
 endif()
@@ -104,9 +106,20 @@ enable_testing()
 
 add_executable(test_game tests/test_game.cpp)
 target_include_directories(test_game PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(test_game PRIVATE Boost::headers)
 
 add_executable(test_player tests/test_player.cpp)
 target_include_directories(test_player PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(test_player PRIVATE Boost::headers)
 
 add_executable(test_score tests/test_score.cpp)
 target_include_directories(test_score PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(test_score PRIVATE Boost::headers)
+
+add_executable(test_network tests/test_network.cpp)
+target_include_directories(test_network PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(test_network PRIVATE Boost::headers)
+
+if(WIN32)
+    target_link_libraries(test_network PRIVATE ws2_32 mswsock)
+endif()
