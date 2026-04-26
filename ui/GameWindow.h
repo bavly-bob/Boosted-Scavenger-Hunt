@@ -93,11 +93,12 @@ private:
     QElapsedTimer m_objectiveFlashTimer;
     bool m_objectiveFlashActive;
 
-    static constexpr int    TILE_SIZE               = 64;
+    static constexpr int    TILE_SIZE               = 32;
     static constexpr qreal  CAMERA_LERP             = 0.18;
-    static constexpr int    VISIBILITY_RADIUS_TILES = 6;
-    static constexpr int    MINIMAP_SIZE            = 160;
-    static constexpr int    MINIMAP_CELL            = 3;
+    static constexpr int    VISIBILITY_RADIUS_TILES = 8;
+
+    static constexpr int    HUD_HEIGHT              = 80;
+    static constexpr int    MINIMAP_SIZE            = 200;
 };
 
 #endif // GAMEWINDOW_H
