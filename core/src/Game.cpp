@@ -17,6 +17,8 @@
 #include <QRandomGenerator>
 #include <QDir>
 #include <QCoreApplication>
+#include <QUrl>
+#include <QDebug>
 
 namespace {
 QString findDifficultyConfigPath()
@@ -35,7 +37,7 @@ QString findDifficultyConfigPath()
     }
     return QString();
 }
-} // namespace
+}
 
 Game::Game(QObject* parent)
     : QObject(parent),
@@ -63,9 +65,35 @@ Game::Game(QObject* parent)
 
     m_timer->setInterval(1000);
     connect(m_timer, &QTimer::timeout, this, &Game::onTick);
+    initSounds();
 }
 
 Game::~Game() = default;
+
+void Game::initSounds()
+{
+    auto setup = [](QSoundEffect& sfx, const QString& path, float volume = 1.0f) {
+        sfx.setSource(QUrl::fromLocalFile(path));
+        sfx.setVolume(volume);
+    };
+
+    const QString base = QCoreApplication::applicationDirPath() + "/assets/sounds/";
+
+    setup(m_sfxCoin,          base + "coin.wav");
+    setup(m_sfxWallOpen,      base + "wall_open.wav");
+    setup(m_sfxPressurePlate, base + "pressure_plate.wav");
+    setup(m_sfxTreasure,      base + "treasure.wav");
+    setup(m_sfxWin,           base + "win.wav");
+    setup(m_sfxGameOver,      base + "game_over.wav");
+    setup(m_sfxBlocked,       base + "blocked.wav");
+    setup(m_sfxClue, base + "clue.wav");
+
+    QTimer::singleShot(2000, this, [this]() {
+        qDebug() << "blocked status:" << m_sfxBlocked.status();
+        qDebug() << "coin status:"    << m_sfxCoin.status();
+        qDebug() << "win status:"     << m_sfxWin.status();
+    });
+}
 
 void Game::setLevelFiles(const QStringList& levelFiles)
 {
@@ -313,7 +341,8 @@ void Game::handleInput(Direction dir)
 
     QString blockedReason;
     if (!m_currentLevel->canPlayerEnter(targetX, targetY, *m_player, &blockedReason)) {
-        // Put your sound here
+        m_sfxBlocked.stop();
+        m_sfxBlocked.play();
         if (!blockedReason.isEmpty() && blockedReason.contains("locked", Qt::CaseInsensitive)) {
             emit clueRevealed(blockedReason);
             emit gameUpdated();
@@ -343,12 +372,15 @@ void Game::handleInput(Direction dir)
         }
     }
     if (interaction.coinCollected) {
-        // Put your sound here
+        m_sfxCoin.stop();
+        m_sfxCoin.play();
         emit coinCollected(interaction.coinsCollectedTotal);
     }
     bool clueShownThisStep = false;
     for (const QString& clue : interaction.revealedClues) {
         clueShownThisStep = true;
+    m_sfxClue.stop();
+    m_sfxClue.play();   
         if (m_aiHelper && m_aiHelper->isEnabled()) {
             m_aiHelper->rephrase(clue, [this](QString transformed) {
                 transformed = transformed.trimmed();
@@ -366,18 +398,22 @@ void Game::handleInput(Direction dir)
         }
     }
     if (interaction.wallOpened) {
-        // Put your sound here
+        m_sfxWallOpen.stop();
+        m_sfxWallOpen.play();
         emit wallOpened();
     } else if (interaction.triggerActivated && !clueShownThisStep) {
-        // Put your sound here
+        m_sfxPressurePlate.stop();
+        m_sfxPressurePlate.play();
         emit clueRevealed("The pressure plate clicks, but no nearby wall moved.");
     }
     if (interaction.treasureUnlocked && !clueShownThisStep) {
-        // Put your sound here
+        m_sfxTreasure.play();
         emit treasureUnlocked();
     }
-    if (interaction.won) { // hint an enemy
-        // Put your sound here
+    if (interaction.won) { 
+        m_sfxWin.stop();
+        m_sfxWin.play();
+
         if (m_score > m_highScore) {
             m_highScore = m_score;
         }
@@ -523,7 +559,8 @@ void Game::onTick()
 
 void Game::endRunWithFailure()
 {
-    // Put your sound here
+    m_sfxGameOver.stop(); 
+    m_sfxGameOver.play();
     m_state = GameState::GAME_OVER;
     m_timer->stop();
 
@@ -535,6 +572,5 @@ void Game::endRunWithFailure()
     emit gameUpdated();
     emit gameOver(false, finalScore);
 
-    // New run begins from zero after death.
     m_score = 0;
 }

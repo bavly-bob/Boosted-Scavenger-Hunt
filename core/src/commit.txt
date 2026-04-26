@@ -1,0 +1,12 @@
+Added sound effects:
+    Implemented for the following events:
+    - Coin collected
+    - Wall opened
+    - Pressure plate activated
+    - Treasure unlocked
+    - Clue picked up
+    - Level won
+- Game over / death
+- Player blocked
+
+Used QSoundEffect from Qt Multimedia. Sound files are stored in assets/sounds/ and loaded using absolute paths via QCoreApplication::applicationDirPath()."

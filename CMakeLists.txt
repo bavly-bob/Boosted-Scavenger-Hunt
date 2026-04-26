@@ -13,8 +13,8 @@ if(MSVC)
     add_compile_options(/Zc:__cplusplus /permissive-)
 endif()
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Multimedia)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Multimedia)
 
 set(PROJECT_SOURCES
         main.cpp
@@ -65,7 +65,7 @@ else()
     endif()
 endif()
 
-target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network)
+target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Multimedia)
 target_include_directories(ScavengerHunt PRIVATE . core/include gameplay/include systems/include utils ui)
 
 add_custom_command(TARGET ScavengerHunt POST_BUILD

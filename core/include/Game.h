@@ -8,6 +8,7 @@
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
+#include <QSoundEffect>
 
 #include <memory>
 
@@ -42,6 +43,19 @@ class Game : public QObject {
     std::unique_ptr<ClueManager> m_clueManager;
     std::unique_ptr<AIHelper> m_aiHelper;
     QTimer* m_timer;
+
+    // Sound effects
+    QSoundEffect m_sfxCoin;
+    QSoundEffect m_sfxWallOpen;
+    QSoundEffect m_sfxPressurePlate;
+    QSoundEffect m_sfxTreasure;
+    QSoundEffect m_sfxWin;
+    QSoundEffect m_sfxGameOver;
+    QSoundEffect m_sfxBlocked;
+    QSoundEffect m_sfxClue;
+    
+
+    void initSounds();
 
 public:
     explicit Game(QObject* parent = nullptr);
