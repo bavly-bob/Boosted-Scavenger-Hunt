@@ -15,6 +15,8 @@ endif()
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
+find_package(Boost 1.89.0 REQUIRED CONFIG)
+
 
 set(PROJECT_SOURCES
         main.cpp
@@ -65,7 +67,11 @@ else()
     endif()
 endif()
 
-target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network)
+if(WIN32)
+    target_link_libraries(ScavengerHunt PRIVATE ws2_32 mswsock)
+endif()
+
+target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network  Boost::headers)
 target_include_directories(ScavengerHunt PRIVATE . core/include gameplay/include systems/include utils ui)
 
 add_custom_command(TARGET ScavengerHunt POST_BUILD
@@ -104,9 +110,20 @@ enable_testing()
 
 add_executable(test_game tests/test_game.cpp)
 target_include_directories(test_game PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(test_game PRIVATE Boost::headers)
 
 add_executable(test_player tests/test_player.cpp)
 target_include_directories(test_player PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(test_player PRIVATE Boost::headers)
 
 add_executable(test_score tests/test_score.cpp)
 target_include_directories(test_score PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(test_score PRIVATE Boost::headers)
+
+add_executable(test_network tests/test_network.cpp)
+target_include_directories(test_network PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(test_network PRIVATE Boost::headers)
+
+if(WIN32)
+    target_link_libraries(test_network PRIVATE ws2_32 mswsock)
+endif()
