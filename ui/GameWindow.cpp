@@ -1295,8 +1295,15 @@ int GameWindow::hudHeight() const
 
 void GameWindow::layoutHudButtons()
 {
-    m_hudRestartBtn->setGeometry(width() - 210, 16, 80, 28);
-    m_hudQuitBtn->setGeometry(width() - 110, 16, 80, 28);
+    // Buttons sit in the lower half of the HUD so they never overlap
+    // the timer text that occupies the top-right of the HUD panel.
+    // Layout (right-to-left): [Quit][Restart] with 8px gap between them.
+    constexpr int BTN_W    = 90;
+    constexpr int BTN_H    = 30;
+    constexpr int BTN_Y    = HUD_HEIGHT / 2 + 4;   // ~44px — lower half
+    constexpr int MARGIN_R = 10;
+    m_hudQuitBtn   ->setGeometry(width() - MARGIN_R - BTN_W,              BTN_Y, BTN_W, BTN_H);
+    m_hudRestartBtn->setGeometry(width() - MARGIN_R - BTN_W * 2 - 8,     BTN_Y, BTN_W, BTN_H);
 }
 
 float GameWindow::statusOpacity() const
