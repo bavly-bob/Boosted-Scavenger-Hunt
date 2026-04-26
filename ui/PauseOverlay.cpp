@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QKeyEvent>
 
 PauseOverlay::PauseOverlay(QWidget *parent)
     : QWidget(parent),
@@ -55,5 +56,25 @@ void PauseOverlay::paintEvent(QPaintEvent *event)
     Q_UNUSED(event);
     QPainter p(this);
     p.fillRect(rect(), QColor(0, 0, 0, 170));
+}
+
+void PauseOverlay::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    m_resumeButton->setFocus();
+}
+
+void PauseOverlay::keyPressEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Escape) {
+        emit resumeRequested();
+        return;
+    } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (m_resumeButton->hasFocus()) emit resumeRequested();
+        else if (m_restartButton->hasFocus()) emit restartRequested();
+        else if (m_mainMenuButton->hasFocus()) emit mainMenuRequested();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 

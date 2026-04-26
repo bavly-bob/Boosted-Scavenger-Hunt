@@ -3,6 +3,8 @@
 #include "Game.h"
 #include "GameOverOverlay.h"
 #include "GameObject.h"
+#include "Coin.h"
+#include "Enemy.h"
 #include "InputHandler.h"
 #include "Level.h"
 #include "LevelLoader.h"
@@ -19,6 +21,7 @@
 #include <QPainter>
 #include <QRadialGradient>
 #include <QTimer>
+#include <QPushButton>
 
 
 namespace {
@@ -96,7 +99,7 @@ bool loadTileWithFallback(QPixmap& out, const QStringList& candidatePaths, int t
     }
 
     if (pix.width() != tileSize || pix.height() != tileSize) {
-        pix = pix.scaled(tileSize, tileSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        pix = pix.scaled(tileSize, tileSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
     out = pix;
     return true;
@@ -185,7 +188,12 @@ GameWindow::GameWindow(QWidget *parent)
       m_cameraPx(0.0, 0.0),
       m_levelsConfigured(false),
       m_assetsLoaded(false),
-      m_statusIsAiHint(false)
+      m_statusIsAiHint(false),
+      m_hudRestartBtn(new QPushButton("Restart", this)),
+      m_hudQuitBtn(new QPushButton("Quit", this)),
+      m_statusDurationMs(3000),
+      m_prevCoins(0),
+      m_objectiveFlashActive(false)
 {
     setWindowTitle("Scavenger Hunt");
     setFocusPolicy(Qt::StrongFocus);
@@ -194,6 +202,30 @@ GameWindow::GameWindow(QWidget *parent)
 
     m_pauseOverlay->hide();
     m_gameOverOverlay->hide();
+
+    m_hudRestartBtn->setCursor(Qt::PointingHandCursor);
+    m_hudRestartBtn->setStyleSheet(
+        "QPushButton { background: rgba(60,60,80,0.8); color: white; border-radius: 4px; font-size: 13px; }"
+        "QPushButton:hover { background: rgba(80,80,100,0.9); border: 1px solid white; }"
+        "QPushButton:pressed { background: rgba(40,40,60,0.9); }"
+    );
+    m_hudQuitBtn->setCursor(Qt::PointingHandCursor);
+    m_hudQuitBtn->setStyleSheet(
+        "QPushButton { background: rgba(80,40,40,0.8); color: white; border-radius: 4px; font-size: 13px; }"
+        "QPushButton:hover { background: rgba(100,50,50,0.9); border: 1px solid white; }"
+        "QPushButton:pressed { background: rgba(60,30,30,0.9); }"
+    );
+    connect(m_hudRestartBtn, &QPushButton::clicked, this, [this](){
+        m_game->restartLevel();
+        setFocus();
+    });
+    connect(m_hudQuitBtn, &QPushButton::clicked, this, [this](){
+        m_game->pause();
+        m_game->saveGame("save.json");
+        m_gameOverOverlay->hide();
+        hide();
+        emit quitToMainMenuRequested();
+    });
 
     connect(m_game, &Game::gameUpdated,       this, QOverload<>::of(&GameWindow::update));
     connect(m_game, &Game::levelChanged,      this, &GameWindow::onLevelChanged);
@@ -257,7 +289,9 @@ GameWindow::GameWindow(QWidget *parent)
         emit quitToMainMenuRequested();
     });
 
-    setFixedSize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+    setMinimumSize(800, 600);
+    resize(1280, 960);
+    layoutHudButtons();
 }
 static QRect alphaBounds(const QImage& img)
 {
@@ -444,7 +478,7 @@ void GameWindow::loadAssets()
             QPixmap tile = m_wallTileSheet.copy(v * srcTileSize, 0, srcTileSize, srcTileSize)
                                .scaled(TILE_SIZE, TILE_SIZE,
                                        Qt::IgnoreAspectRatio,
-                                       Qt::FastTransformation);
+                                       Qt::SmoothTransformation);
             m_wallTiles.append(tile);
             m_spriteManager.loadPixmap(QString("wall_%1").arg(v), tile);
         }
@@ -618,7 +652,7 @@ void GameWindow::snapCameraToPlayer()
     const int mapPixelW = level->getWidth()  * TILE_SIZE;
     const int mapPixelH = level->getHeight() * TILE_SIZE;
     const int viewPixelW = width();
-    const int viewPixelH = height() - HUD_HEIGHT;
+    const int viewPixelH = height() - hudHeight();
 
     qreal camX = qBound<qreal>(0.0, playerPxX - viewPixelW / 2.0,
                                qMax<qreal>(0.0, mapPixelW - viewPixelW));
@@ -649,13 +683,13 @@ void GameWindow::paintEvent(QPaintEvent *event)
     p.fillRect(rect(), grad);
     {
         p.save();
-        p.setClipRect(QRect(0, 0, width(), HUD_HEIGHT));
-        QLinearGradient hudGrad(0, 0, 0, HUD_HEIGHT);
+        p.setClipRect(QRect(0, 0, width(), hudHeight()));
+        QLinearGradient hudGrad(0, 0, 0, hudHeight());
         hudGrad.setColorAt(0.0, QColor(0, 0, 0, 180));
         hudGrad.setColorAt(1.0, QColor(0, 0, 0, 60));
-        p.fillRect(QRect(0, 0, width(), HUD_HEIGHT), hudGrad);
+        p.fillRect(QRect(0, 0, width(), hudHeight()), hudGrad);
         p.setPen(QPen(QColor(100, 80, 200, 120), 1));
-        p.drawLine(0, HUD_HEIGHT - 1, width(), HUD_HEIGHT - 1);
+        p.drawLine(0, hudHeight() - 1, width(), hudHeight() - 1);
 
         const QString levelName = m_game->currentLevelName();
         const QString scoreText = QString("Score: %1").arg(m_game->score());
@@ -663,66 +697,106 @@ void GameWindow::paintEvent(QPaintEvent *event)
         const int coins = m_game->coinsCollected();
         const QString timeText = formatTime(m_game->timeRemaining());
         const QString runTimeText = formatTime(m_game->runTimeSeconds());
+        
         QFont titleFont = p.font();
         titleFont.setBold(true);
-        titleFont.setPointSize(11);
+        titleFont.setPointSize(13);
         p.setFont(titleFont);
+        
+        p.setPen(QColor(0, 0, 0, 150));
+        p.drawText(QRect(13, 7, width() - 24, 24), Qt::AlignLeft | Qt::AlignVCenter, levelName.isEmpty() ? "Scavenger Hunt" : levelName);
         p.setPen(QColor(220, 200, 255));
-        p.drawText(QRect(12, 6, width() - 24, 24),
-                   Qt::AlignLeft | Qt::AlignVCenter,
-                   levelName.isEmpty() ? "Scavenger Hunt" : levelName);
+        p.drawText(QRect(12, 6, width() - 24, 24), Qt::AlignLeft | Qt::AlignVCenter, levelName.isEmpty() ? "Scavenger Hunt" : levelName);
 
         QFont infoFont = p.font();
         infoFont.setBold(false);
-        infoFont.setPointSize(9);
+        infoFont.setPointSize(11);
         p.setFont(infoFont);
-        p.setPen(QColor(180, 220, 180));
-        p.drawText(QRect(12, 32, 160, 18), Qt::AlignLeft | Qt::AlignVCenter, scoreText);
-        p.setPen(QColor(205, 190, 235));
-        p.drawText(QRect(170, 32, 140, 18), Qt::AlignLeft | Qt::AlignVCenter, highScoreText);
-        const int coinX = width() / 2 - 60;
-        p.setPen(QColor(200, 200, 200));
-        p.drawText(QRect(coinX, 32, 120, 18), Qt::AlignLeft | Qt::AlignVCenter, "Coins: ");
-        for (int i = 0; i < 4; ++i) {
+        
+        auto drawShadowText = [&](const QRect& r, int align, const QString& t, const QColor& c) {
+            p.setPen(QColor(0, 0, 0, 150));
+            p.drawText(r.translated(1, 1), align, t);
+            p.setPen(c);
+            p.drawText(r, align, t);
+        };
+
+        drawShadowText(QRect(12, 36, 160, 22), Qt::AlignLeft | Qt::AlignVCenter, scoreText, QColor(180, 220, 180));
+        drawShadowText(QRect(170, 36, 140, 22), Qt::AlignLeft | Qt::AlignVCenter, highScoreText, QColor(205, 190, 235));
+        
+        const int coinX = width() / 2 - 80;
+        drawShadowText(QRect(coinX, 36, 120, 22), Qt::AlignLeft | Qt::AlignVCenter, "Coins: ", QColor(200, 200, 200));
+        
+        if (coins > m_prevCoins) {
+            m_coinPopTimer.start();
+            m_prevCoins = coins;
+        }
+
+        for (int i = 0; i < 3; ++i) {
             const QColor coinColor = (i < coins) ? QColor(255, 210, 40) : QColor(80, 80, 80);
             p.setBrush(coinColor);
             p.setPen(QPen(coinColor.darker(150), 1));
-            p.drawEllipse(coinX + 58 + i * 20, 36, 12, 12);
+            
+            int r = 6;
+            if (i == coins - 1 && m_coinPopTimer.isValid() && m_coinPopTimer.elapsed() < 300) {
+                float progress = m_coinPopTimer.elapsed() / 300.0f;
+                r = 6 + (int)(std::sin(progress * 3.14159f) * 4.0f);
+            }
+            p.drawEllipse(QPoint(coinX + 64 + i * 20, 47), r, r);
+            
+            if (i < coins) {
+                p.setPen(QColor(0, 0, 0, 150));
+                QFont f = p.font(); f.setPointSize(8); f.setBold(true); p.setFont(f);
+                p.drawText(QRect(coinX + 64 + i * 20 - r, 47 - r, r*2, r*2), Qt::AlignCenter, "✓");
+                p.setFont(infoFont);
+            }
         }
+        
+        drawShadowText(QRect(coinX + 64 + 3 * 20, 36, 100, 22), Qt::AlignLeft | Qt::AlignVCenter, "(3 to unlock)", QColor(150, 150, 150));
+
         const int timeRemaining = m_game->timeRemaining();
-        const QColor timeColor = (timeRemaining > 30) ? QColor(200, 220, 200)
-                                 : (timeRemaining > 10) ? QColor(240, 200, 80)
-                                 : QColor(240, 80, 80);
-        p.setPen(QColor(175, 205, 255));
-        p.drawText(QRect(width() - 245, 32, 118, 18),
-                   Qt::AlignRight | Qt::AlignVCenter,
-                   QString("Run: %1").arg(runTimeText));
-        p.setPen(timeColor);
-        p.drawText(QRect(width() - 120, 32, 108, 18),
-                   Qt::AlignRight | Qt::AlignVCenter,
-                   QString("Time: %1").arg(timeText));
-        p.setPen(QPen(QColor(200, 200, 200), 1));
-        QRect restartBtn(width() - 210, 6, 80, 24);
-        p.setBrush(QColor(60, 60, 80));
-        p.drawRoundedRect(restartBtn, 4, 4);
-        p.drawText(restartBtn, Qt::AlignCenter, "Restart");
-        QRect quitBtn(width() - 120, 6, 80, 24);
-        p.setBrush(QColor(80, 40, 40));
-        p.drawRoundedRect(quitBtn, 4, 4);
-        p.drawText(quitBtn, Qt::AlignCenter, "Quit");
+        QString timePrefix = "";
+        QColor timeColor = QColor(200, 220, 200);
+        bool timePulsing = false;
+        
+        if (timeRemaining <= 10) {
+            timePrefix = "⏰ ";
+            timeColor = QColor(240, 80, 80);
+            timePulsing = true;
+            QFont boldFont = infoFont; boldFont.setBold(true); p.setFont(boldFont);
+        } else if (timeRemaining <= 30) {
+            timePrefix = "⚠ ";
+            timeColor = QColor(240, 200, 80);
+        }
+        
+        drawShadowText(QRect(width() - 245, 36, 118, 22), Qt::AlignRight | Qt::AlignVCenter, QString("Run: %1").arg(runTimeText), QColor(175, 205, 255));
+        
+        if (timePulsing) {
+            int alpha = 255 - (int)(std::abs(std::sin(m_frameTimer.elapsed() / 150.0f)) * 100);
+            timeColor.setAlpha(alpha);
+        }
+        drawShadowText(QRect(width() - 120, 36, 108, 22), Qt::AlignRight | Qt::AlignVCenter, QString("Time: %1%2").arg(timePrefix, timeText), timeColor);
+        p.setFont(infoFont);
         p.restore();
     }
+
+    // Control hints strip
+    p.setBrush(QColor(0, 0, 0, 100));
+    p.setPen(Qt::NoPen);
+    p.drawRect(0, hudHeight() - 20, 240, 20);
+    p.setPen(QColor(180, 180, 180, 180));
+    QFont hintFont = p.font(); hintFont.setPointSize(8); p.setFont(hintFont);
+    p.drawText(QRect(8, hudHeight() - 20, 232, 20), Qt::AlignLeft | Qt::AlignVCenter, "WASD/Arrows: Move  •  Esc: Pause");
 
     const Level*  level  = m_game->level();
     const Player* player = m_game->player();
     if (!level || !player) return;
     p.save();
-    p.translate(0, HUD_HEIGHT);
+    p.translate(0, hudHeight());
 
     const int mapPixelW = level->getWidth()  * TILE_SIZE;
     const int mapPixelH = level->getHeight() * TILE_SIZE;
     const int viewPixelW = width();
-    const int viewPixelH = height() - HUD_HEIGHT;
+    const int viewPixelH = height() - hudHeight();
 
     const qreal playerPxX = player->getX() * TILE_SIZE + TILE_SIZE / 2.0;
     const qreal playerPxY = player->getY() * TILE_SIZE + TILE_SIZE / 2.0;
@@ -933,50 +1007,75 @@ void GameWindow::paintEvent(QPaintEvent *event)
 
     // Draw hints/status as a final overlay so they always stay above gameplay.
     if (!m_statusText.isEmpty()) {
-        p.save();
-        const int overlayY = HUD_HEIGHT + 8;
-        const int overlayH = 28;
-        const QRect panelRect(12, overlayY, width() - 24, overlayH);
+        float opacity = statusOpacity();
+        if (opacity > 0.0f) {
+            p.save();
+            p.setOpacity(opacity);
+            const int overlayY = hudHeight() + 8;
+            const int overlayH = 28;
+            const QRect panelRect(12, overlayY, width() - 24, overlayH);
 
-        if (m_statusIsAiHint) {
-            p.setBrush(QColor(24, 38, 56, 225));
-            p.setPen(QPen(QColor(120, 200, 255), 1));
-            p.drawRoundedRect(panelRect, 5, 5);
+            if (m_statusIsAiHint) {
+                p.setBrush(QColor(24, 38, 56, 225));
+                p.setPen(QPen(QColor(120, 200, 255), 1));
+                p.drawRoundedRect(panelRect, 5, 5);
 
-            QFont labelFont = p.font();
-            labelFont.setBold(true);
-            labelFont.setPointSize(8);
-            p.setFont(labelFont);
-            p.setPen(QColor(170, 225, 255));
-            p.drawText(QRect(panelRect.x() + 8, panelRect.y() + 6, 84, 16),
-                       Qt::AlignLeft | Qt::AlignVCenter, "[*] AI Hint");
+                QFont labelFont = p.font();
+                labelFont.setBold(true);
+                labelFont.setPointSize(8);
+                p.setFont(labelFont);
+                p.setPen(QColor(170, 225, 255));
+                p.drawText(QRect(panelRect.x() + 8, panelRect.y() + 6, 84, 16),
+                           Qt::AlignLeft | Qt::AlignVCenter, "[*] AI Hint");
 
-            QString hintBody = m_statusText;
-            if (hintBody.startsWith("AI Hint:", Qt::CaseInsensitive)) {
-                hintBody = hintBody.mid(QString("AI Hint:").size()).trimmed();
+                QString hintBody = m_statusText;
+                if (hintBody.startsWith("AI Hint:", Qt::CaseInsensitive)) {
+                    hintBody = hintBody.mid(QString("AI Hint:").size()).trimmed();
+                }
+                QFont bodyFont = p.font();
+                bodyFont.setBold(false);
+                p.setFont(bodyFont);
+                p.setPen(QColor(225, 235, 245));
+                const QRect hintTextRect(panelRect.x() + 96, panelRect.y() + 6, panelRect.width() - 104, 16);
+                const QString elidedHint = p.fontMetrics().elidedText(hintBody, Qt::ElideRight, hintTextRect.width());
+                p.drawText(hintTextRect, Qt::AlignLeft | Qt::AlignVCenter, elidedHint);
+            } else {
+                p.setBrush(QColor(34, 28, 22, 220));
+                p.setPen(QPen(QColor(210, 180, 120), 1));
+                p.drawRoundedRect(panelRect, 5, 5);
+
+                QFont statusFont = p.font();
+                statusFont.setItalic(true);
+                statusFont.setPointSize(9);
+                p.setFont(statusFont);
+                p.setPen(QColor(240, 215, 150));
+                const QRect statusRect(panelRect.x() + 10, panelRect.y() + 5, panelRect.width() - 20, 18);
+                const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
+                p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
             }
-            QFont bodyFont = p.font();
-            bodyFont.setBold(false);
-            p.setFont(bodyFont);
-            p.setPen(QColor(225, 235, 245));
-            const QRect hintTextRect(panelRect.x() + 96, panelRect.y() + 6, panelRect.width() - 104, 16);
-            const QString elidedHint = p.fontMetrics().elidedText(hintBody, Qt::ElideRight, hintTextRect.width());
-            p.drawText(hintTextRect, Qt::AlignLeft | Qt::AlignVCenter, elidedHint);
+            p.restore();
         } else {
-            p.setBrush(QColor(34, 28, 22, 220));
-            p.setPen(QPen(QColor(210, 180, 120), 1));
-            p.drawRoundedRect(panelRect, 5, 5);
-
-            QFont statusFont = p.font();
-            statusFont.setItalic(true);
-            statusFont.setPointSize(9);
-            p.setFont(statusFont);
-            p.setPen(QColor(240, 215, 150));
-            const QRect statusRect(panelRect.x() + 10, panelRect.y() + 5, panelRect.width() - 20, 18);
-            const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
-            p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
+            m_statusText.clear();
         }
-        p.restore();
+    }
+
+    drawMiniMap(p);
+
+    // Critical state flashes
+    if (m_game->timeRemaining() <= 10) {
+        int alpha = (int)(std::abs(std::sin(m_frameTimer.elapsed() / 150.0f)) * 100);
+        p.setPen(QPen(QColor(255, 0, 0, alpha), 4));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(rect());
+    }
+
+    if (m_objectiveFlashActive && m_objectiveFlashTimer.isValid() && m_objectiveFlashTimer.elapsed() < 400) {
+        int alpha = 255 - (m_objectiveFlashTimer.elapsed() * 255 / 400);
+        p.setPen(QPen(QColor(255, 215, 0, alpha), 6));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(rect());
+    } else {
+        m_objectiveFlashActive = false;
     }
 }
 void GameWindow::keyPressEvent(QKeyEvent *event)
@@ -1008,38 +1107,17 @@ void GameWindow::keyPressEvent(QKeyEvent *event)
     QWidget::keyPressEvent(event);
 }
 
+void GameWindow::mousePressEvent(QMouseEvent *event)
+{
+    QWidget::mousePressEvent(event);
+}
+
 void GameWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     m_pauseOverlay->setGeometry(rect());
     m_gameOverOverlay->setGeometry(rect());
-}
-
-void GameWindow::mousePressEvent(QMouseEvent *event)
-{
-    if (!event) return;
-
-    if (m_game->state() == GameState::PLAYING) {
-        QRect restartBtn(width() - 210, 6, 80, 24);
-        QRect quitBtn(width() - 120, 6, 80, 24);
-
-        if (restartBtn.contains(event->pos())) {
-            m_game->restartLevel();
-            setFocus();
-            return;
-        }
-
-        if (quitBtn.contains(event->pos())) {
-            m_game->pause();
-            m_game->saveGame("save.json");
-            m_gameOverOverlay->hide();
-            hide();
-            emit quitToMainMenuRequested();
-            return;
-        }
-    }
-
-    QWidget::mousePressEvent(event);
+    layoutHudButtons();
 }
 
 void GameWindow::onLevelChanged(int levelIndex)
@@ -1060,6 +1138,8 @@ void GameWindow::onClueRevealed(const QString& text)
 {
     m_statusText = text;
     m_statusIsAiHint = text.startsWith("AI Hint:", Qt::CaseInsensitive);
+    m_statusDurationMs = m_statusIsAiHint ? 6000 : 3500;
+    m_statusTimer.start();
     update();
 }
 
@@ -1067,6 +1147,8 @@ void GameWindow::onWallOpened()
 {
     m_statusText = "You hear stone grinding... a passage opens!";
     m_statusIsAiHint = false;
+    m_statusDurationMs = 3500;
+    m_statusTimer.start();
     update();
 }
 
@@ -1074,6 +1156,10 @@ void GameWindow::onTreasureUnlocked()
 {
     m_statusText = "Treasure unlocked! Find the treasure room!";
     m_statusIsAiHint = false;
+    m_statusDurationMs = 3500;
+    m_statusTimer.start();
+    m_objectiveFlashActive = true;
+    m_objectiveFlashTimer.start();
     update();
 }
 
@@ -1099,7 +1185,9 @@ void GameWindow::ensureLevelsConfigured()
 
 void GameWindow::resizeToCurrentLevel()
 {
-    setFixedSize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+    setMinimumSize(800, 600);
+    resize(1280, 960);
+    layoutHudButtons();
     m_pauseOverlay->setGeometry(rect());
     m_gameOverOverlay->setGeometry(rect());
 }
@@ -1124,4 +1212,89 @@ void GameWindow::resetExplored()
     } else {
         m_explored.clear();
     }
+}
+
+int GameWindow::hudHeight() const
+{
+    return qMax(72, height() / 10);
+}
+
+void GameWindow::layoutHudButtons()
+{
+    m_hudRestartBtn->setGeometry(width() - 210, 16, 80, 28);
+    m_hudQuitBtn->setGeometry(width() - 110, 16, 80, 28);
+}
+
+float GameWindow::statusOpacity() const
+{
+    if (!m_statusTimer.isValid()) return 0.0f;
+    int elapsed = m_statusTimer.elapsed();
+    if (elapsed < m_statusDurationMs) return 1.0f;
+    int fade = elapsed - m_statusDurationMs;
+    if (fade > 500) return 0.0f;
+    return 1.0f - (fade / 500.0f);
+}
+
+void GameWindow::drawMiniMap(QPainter& p) const
+{
+    const Level* level = m_game->level();
+    const Player* player = m_game->player();
+    if (!level || !player || m_explored.isEmpty()) return;
+
+    p.save();
+    const int mapW = level->getWidth();
+    const int mapH = level->getHeight();
+    const int pxMapW = mapW * MINIMAP_CELL;
+    const int pxMapH = mapH * MINIMAP_CELL;
+    
+    // Scale mini-map if it's too large, but typically it fits in MINIMAP_SIZE
+    const int actualW = qMin(pxMapW, MINIMAP_SIZE);
+    const int actualH = qMin(pxMapH, MINIMAP_SIZE);
+    const int panelX = width() - actualW - 20;
+    const int panelY = height() - actualH - 20;
+
+    p.translate(panelX, panelY);
+    
+    p.setBrush(QColor(0, 0, 0, 180));
+    p.setPen(QPen(QColor(100, 100, 100, 100), 2));
+    p.drawRoundedRect(-4, -4, actualW + 8, actualH + 8, 4, 4);
+    
+    p.setClipRect(0, 0, actualW, actualH);
+    
+    for (int y = 0; y < mapH; ++y) {
+        for (int x = 0; x < mapW; ++x) {
+            if (!m_explored.at(y).at(x)) continue;
+            
+            CellType ct = static_cast<CellType>(level->tileAt(x, y));
+            QColor c;
+            switch(ct) {
+                case CellType::Wall:
+                case CellType::HiddenWall:
+                    c = QColor(120, 120, 120); break;
+                case CellType::TreasureRoom:
+                    c = QColor(255, 215, 0); break;
+                default:
+                    c = QColor(60, 60, 60); break;
+            }
+            p.fillRect(x * MINIMAP_CELL, y * MINIMAP_CELL, MINIMAP_CELL, MINIMAP_CELL, c);
+        }
+    }
+    
+    for (Coin* coin : level->getCoins()) {
+        if (!coin->isCollected() && m_explored.at(coin->getY()).at(coin->getX())) {
+            p.fillRect(coin->getX() * MINIMAP_CELL, coin->getY() * MINIMAP_CELL, MINIMAP_CELL, MINIMAP_CELL, QColor(255, 255, 0));
+        }
+    }
+    
+    for (Enemy* enemy : level->getEnemies()) {
+        if (!enemy->isDead() && m_explored.at(enemy->getY()).at(enemy->getX())) {
+            p.fillRect(enemy->getX() * MINIMAP_CELL, enemy->getY() * MINIMAP_CELL, MINIMAP_CELL, MINIMAP_CELL, QColor(255, 50, 50));
+        }
+    }
+    
+    if (m_frameTimer.elapsed() % 1000 < 500) {
+        p.fillRect(player->getX() * MINIMAP_CELL, player->getY() * MINIMAP_CELL, MINIMAP_CELL, MINIMAP_CELL, QColor(0, 255, 255));
+    }
+    
+    p.restore();
 }

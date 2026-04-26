@@ -104,7 +104,12 @@ bool SpriteManager::drawPlayer(const Player& player, QPainter& p, int cellSize) 
     const QRect srcRect(frame * c->frameWidth, c->srcY, c->frameWidth, c->frameHeight);
     QRect dstRect(player.getX() * cellSize, player.getY() * cellSize, cellSize, cellSize);
     dstRect.adjust(-4, -4, 4, 4);
+    
+    p.save();
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
     p.drawPixmap(dstRect, sheet, srcRect);
+    p.restore();
+    
     return true;
 }
 
@@ -134,6 +139,11 @@ bool SpriteManager::drawEnemy(const Enemy& enemy, QPainter& p, int cellSize) con
     const QRect srcRect(frame * c->frameWidth, c->srcY, c->frameWidth, c->frameHeight);
     QRect dstRect(enemy.getX() * cellSize, enemy.getY() * cellSize, cellSize, cellSize);
     dstRect.adjust(-4, -4, 4, 4);
+    
+    p.save();
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
     p.drawPixmap(dstRect, sheet, srcRect);
+    p.restore();
+    
     return true;
 }

@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QKeyEvent>
 
 GameOverOverlay::GameOverOverlay(QWidget *parent)
     : QWidget(parent),
@@ -67,5 +68,23 @@ void GameOverOverlay::paintEvent(QPaintEvent *event)
     Q_UNUSED(event);
     QPainter p(this);
     p.fillRect(rect(), QColor(0, 0, 0, 185));
+}
+
+void GameOverOverlay::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (m_nextLevelButton->isVisible()) m_nextLevelButton->setFocus();
+    else m_restartButton->setFocus();
+}
+
+void GameOverOverlay::keyPressEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (m_nextLevelButton->hasFocus() && m_nextLevelButton->isVisible()) emit nextLevelRequested();
+        else if (m_restartButton->hasFocus()) emit restartRequested();
+        else if (m_mainMenuButton->hasFocus()) emit mainMenuRequested();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
