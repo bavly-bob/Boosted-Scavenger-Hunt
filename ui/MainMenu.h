@@ -4,6 +4,8 @@
 #include <QWidget>
 #include <QPushButton>
 
+class QStackedWidget;
+
 class MainMenu : public QWidget
 {
     Q_OBJECT
@@ -25,6 +27,7 @@ private:
     QPushButton* createButton(const QString &text, const QColor &color);
     
     QPushButton* m_continueBtn;
+    QStackedWidget* m_stackedWidget;
 };
 
 #endif // MAINMENU_H
