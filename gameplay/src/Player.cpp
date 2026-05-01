@@ -161,6 +161,11 @@ void Player::collectCoin()
     m_coinsCollected += 1;
 }
 
+void Player::setCoinsCollected(int coins)
+{
+    m_coinsCollected = coins;
+}
+
 int Player::getCoinsCollected() const
 {
     return m_coinsCollected;
@@ -169,6 +174,20 @@ int Player::getCoinsCollected() const
 bool Player::canEnterTreasureRoom() const
 {
     return m_coinsCollected >= 3;
+}
+
+void Player::teleportTo(int x, int y)
+{
+    setPosition(x, y);
+    m_targetX = x;
+    m_targetY = y;
+    m_pixelX = static_cast<float>(x);
+    m_pixelY = static_cast<float>(y);
+    m_prevPixelX = m_pixelX;
+    m_prevPixelY = m_pixelY;
+    m_isMoving = false;
+    m_moveProgress = 1.0f;
+    m_animator.notifyArrived();
 }
 
 bool Player::isAtTarget() const

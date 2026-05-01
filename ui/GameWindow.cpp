@@ -709,7 +709,6 @@ void GameWindow::startMultiplayerGame()
     setFocus();
 
     if (mode == QStringLiteral("Host Room")) {
-        m_game->startMultiplayerMode();
         m_game->hostMultiplayerSession(selectedPort);
         return;
     }

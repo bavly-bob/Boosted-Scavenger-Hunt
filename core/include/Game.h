@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QPoint>
+#include <QJsonObject>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
@@ -39,6 +40,7 @@ class Game : public QObject {
     quint32 m_runSeedBase;
     int m_runIndex;
     int m_lootRoomsSpawned;
+    int m_sharedCoinsCollected;
     QString m_activeDifficultyProfileId;
     ProceduralGenerationRules m_activeGenerationRules;
     DifficultyConfig m_difficultyConfig;
@@ -147,6 +149,11 @@ private slots:
     void onTick();
 
 private:
+    void prepareMultiplayerRun();
+    void applySharedCoins(int total);
+    void sendAuthoritativeState();
+    void applyAuthoritativeState(const QJsonObject& payload, bool announceConnection);
+    bool isAuthoritativeMultiplayerPeer() const;
     void endRunWithFailure();
     void resetTreasureReachState();
     bool isCellOccupiedByOtherPlayer(int playerIndex, int x, int y) const;

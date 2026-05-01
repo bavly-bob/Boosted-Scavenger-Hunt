@@ -106,6 +106,7 @@ Game::Game(QObject* parent)
       m_runSeedBase(0),
       m_runIndex(0),
       m_lootRoomsSpawned(0),
+      m_sharedCoinsCollected(0),
       m_activeGenerationRules(),
       m_difficultyConfig(DifficultyConfig::defaults()),
       m_multiplayerMode(false),
@@ -169,6 +170,7 @@ void Game::startNewGame(Difficulty diff)
     m_multiplayerMode = false;
     resetTreasureReachState();
     m_score = 0;
+    m_sharedCoinsCollected = 0;
     m_runTimeElapsed = 0;
     m_levelTimeElapsed = 0;
     m_runSeedBase = QRandomGenerator::global()->generate();
@@ -181,22 +183,36 @@ void Game::startNewGame(Difficulty diff)
     startLevel(0, diff);
 }
 
-void Game::startMultiplayerMode()
+void Game::prepareMultiplayerRun()
 {
     m_multiplayerMode = true;
     resetTreasureReachState();
+    m_state = GameState::START;
     m_score = 0;
+    m_sharedCoinsCollected = 0;
     m_runTimeElapsed = 0;
     m_levelTimeElapsed = 0;
+    m_currentLevelIndex = 0;
     m_runSeedBase = QRandomGenerator::global()->generate();
     ++m_runIndex;
     m_lootRoomsSpawned = 0;
+
     const DifficultyProfile profile = m_difficultyConfig.selectProfile(Difficulty::HARD, m_runSeedBase, m_runIndex);
     m_activeDifficultyProfileId = profile.id;
     m_activeGenerationRules = profile.rules;
     m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
-    startLevel(0, Difficulty::HARD);
-    emit clueRevealed("Multiplayer co-op: hard mode, shared coins, reach treasure together.");
+
+    m_currentLevel.reset();
+    m_players[0].reset();
+    m_players[1].reset();
+    m_timer->stop();
+}
+
+void Game::startMultiplayerMode()
+{
+    prepareMultiplayerRun();
+    emit clueRevealed("Multiplayer co-op: waiting for both players before the run starts.");
+    emit gameUpdated();
 }
 
 void Game::hostMultiplayerSession(int port)
@@ -206,6 +222,7 @@ void Game::hostMultiplayerSession(int port)
         return;
     }
 
+    prepareMultiplayerRun();
     stopNetworkThread(); // clean up any previous session
     m_localPlayerIndex = 0;
     m_lastInSeq        = 0;
@@ -235,18 +252,6 @@ void Game::hostMultiplayerSession(int port)
                 return;
             }
             // Send StateSync (synchronous single write — on io thread, not main)
-            using namespace scavenger::net;
-            const auto stateMsg = makeStateSync(
-                ++m_outSeq, m_currentLevelIndex,
-                static_cast<int>(m_difficulty),
-                m_score, m_highScore,
-                static_cast<qint64>(m_runSeedBase),
-                m_runIndex, m_lootRoomsSpawned,
-                m_runTimeElapsed, m_levelTimeElapsed, m_timeRemaining);
-            const std::string frame = netwatch::protocol::encode(stateMsg.toJson().toStdString());
-            boost::system::error_code wec;
-            boost::asio::write(*sockPtr, boost::asio::buffer(frame), wec);
-
             m_net->socket = sockPtr;
 
             const std::string peerAddr = [&]() -> std::string {
@@ -254,7 +259,9 @@ void Game::hostMultiplayerSession(int port)
                 return sockPtr->remote_endpoint(ignored).address().to_string();
             }();
             QMetaObject::invokeMethod(this, [this, peerAddr]() {
-                emit clueRevealed("Peer joined from " + QString::fromStdString(peerAddr));
+                emit clueRevealed("Peer joined from " + QString::fromStdString(peerAddr) + ". Starting shared run.");
+                startLevel(0, Difficulty::HARD);
+                emit clueRevealed("Multiplayer co-op: shared coins, shared deaths, synchronized level progression.");
             }, Qt::QueuedConnection);
 
             scheduleRead(); // start persistent receive loop (fixes N2)
@@ -357,36 +364,7 @@ void Game::joinMultiplayerSession(const QString& host, int port)
 
                             // Apply state on main thread, then start read loop (fixes N2)
                             QMetaObject::invokeMethod(this, [this, p]() {
-                                const int levelIndex = qMax(0, p.value("levelIndex").toInt(0));
-                                const int diffInt    = p.value("difficulty").toInt(1);
-                                Difficulty diff = Difficulty::NORMAL;
-                                if (diffInt == 0) diff = Difficulty::EASY;
-                                else if (diffInt == 2) diff = Difficulty::HARD;
-
-                                m_multiplayerMode = true;
-                                resetTreasureReachState();
-                                m_score            = p.value("score").toInt(0);
-                                m_highScore        = p.value("highScore").toInt(m_score);
-                                m_runSeedBase      = static_cast<quint32>(p.value("seedBase").toDouble(0.0));
-                                m_runIndex         = qMax(1, p.value("runIndex").toInt(1));
-                                m_lootRoomsSpawned = qMax(0, p.value("lootRoomsSpawned").toInt(0));
-                                if (m_runSeedBase == 0u)
-                                    m_runSeedBase = QRandomGenerator::global()->generate();
-
-                                const DifficultyProfile profile =
-                                    m_difficultyConfig.selectProfile(diff, m_runSeedBase, m_runIndex);
-                                m_activeDifficultyProfileId = profile.id;
-                                m_activeGenerationRules     = profile.rules;
-                                m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
-
-                                startLevel(levelIndex, diff);
-                                m_runTimeElapsed   = qMax(0, p.value("runTimeSeconds").toInt(0));
-                                m_levelTimeElapsed = qMax(0, p.value("levelTimeSeconds").toInt(0));
-                                m_timeRemaining    = qMax(0, p.value("timeRemaining").toInt(m_timeRemaining));
-
-                                emit clueRevealed("Connected to host. You are Player 2.");
-                                emit timerTick(m_timeRemaining);
-                                emit gameUpdated();
+                                applyAuthoritativeState(p, true);
                             }, Qt::QueuedConnection);
 
                             scheduleRead(); // persistent receive loop
@@ -522,10 +500,165 @@ void Game::onRawMessage(const std::string& raw)
         break;
     }
     case MsgType::StateSync:
-        break; // already handled inline during handshake
+        QMetaObject::invokeMethod(this, [this, payload = msg.payload]() {
+            applyAuthoritativeState(payload, false);
+        }, Qt::QueuedConnection);
+        break;
     default:
         break;
     }
+}
+
+void Game::applySharedCoins(int total)
+{
+    total = qMax(0, total);
+    m_sharedCoinsCollected = total;
+    for (auto& maybePlayer : m_players) {
+        if (maybePlayer) {
+            maybePlayer->setCoinsCollected(total);
+        }
+    }
+}
+
+bool Game::isAuthoritativeMultiplayerPeer() const
+{
+    return m_multiplayerMode
+        && m_localPlayerIndex == 0
+        && m_net
+        && m_net->socket
+        && m_net->socket->is_open();
+}
+
+void Game::sendAuthoritativeState()
+{
+    if (!isAuthoritativeMultiplayerPeer()) {
+        return;
+    }
+
+    using namespace scavenger::net;
+
+    const QPoint p0 = playerPosition(0);
+    const QPoint p1 = playerPosition(1);
+    sendGameMessage(makeStateSync(++m_outSeq,
+                                  m_currentLevelIndex,
+                                  static_cast<int>(m_difficulty),
+                                  m_score,
+                                  m_highScore,
+                                  static_cast<qint64>(m_runSeedBase),
+                                  m_runIndex,
+                                  m_lootRoomsSpawned,
+                                  m_runTimeElapsed,
+                                  m_levelTimeElapsed,
+                                  m_timeRemaining,
+                                  m_sharedCoinsCollected,
+                                  static_cast<int>(m_state),
+                                  p0.x(),
+                                  p0.y(),
+                                  p1.x(),
+                                  p1.y(),
+                                  m_playerReachedTreasure[0],
+                                  m_playerReachedTreasure[1]).toJson());
+}
+
+void Game::applyAuthoritativeState(const QJsonObject& payload, bool announceConnection)
+{
+    const int levelIndex = qMax(0, payload.value(QStringLiteral("levelIndex")).toInt(0));
+    const int diffInt    = payload.value(QStringLiteral("difficulty")).toInt(1);
+    Difficulty diff = Difficulty::NORMAL;
+    if (diffInt == 0) diff = Difficulty::EASY;
+    else if (diffInt == 2) diff = Difficulty::HARD;
+
+    quint32 seedBase = static_cast<quint32>(payload.value(QStringLiteral("seedBase")).toDouble(0.0));
+    if (seedBase == 0u) {
+        seedBase = QRandomGenerator::global()->generate();
+    }
+
+    const int runIndex = qMax(1, payload.value(QStringLiteral("runIndex")).toInt(1));
+    const int lootRoomsSpawned = qMax(0, payload.value(QStringLiteral("lootRoomsSpawned")).toInt(0));
+
+    const bool needsLevelReload =
+        !m_currentLevel
+        || !m_players[0]
+        || !m_multiplayerMode
+        || m_currentLevelIndex != levelIndex
+        || m_difficulty != diff
+        || m_runSeedBase != seedBase
+        || m_runIndex != runIndex;
+
+    m_multiplayerMode = true;
+    m_score = payload.value(QStringLiteral("score")).toInt(0);
+    m_highScore = payload.value(QStringLiteral("highScore")).toInt(m_score);
+    m_runSeedBase = seedBase;
+    m_runIndex = runIndex;
+    m_lootRoomsSpawned = lootRoomsSpawned;
+
+    const DifficultyProfile profile = m_difficultyConfig.selectProfile(diff, m_runSeedBase, m_runIndex);
+    m_activeDifficultyProfileId = profile.id;
+    m_activeGenerationRules = profile.rules;
+
+    if (needsLevelReload) {
+        m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
+        startLevel(levelIndex, diff);
+    }
+
+    m_runTimeElapsed = qMax(0, payload.value(QStringLiteral("runTimeSeconds")).toInt(0));
+    m_levelTimeElapsed = qMax(0, payload.value(QStringLiteral("levelTimeSeconds")).toInt(0));
+    m_timeRemaining = qMax(0, payload.value(QStringLiteral("timeRemaining")).toInt(m_timeRemaining));
+    applySharedCoins(payload.value(QStringLiteral("sharedCoins")).toInt(m_sharedCoinsCollected));
+    m_playerReachedTreasure[0] = payload.value(QStringLiteral("p0ReachedTreasure")).toBool(false);
+    m_playerReachedTreasure[1] = payload.value(QStringLiteral("p1ReachedTreasure")).toBool(false);
+
+    if (m_players[0]) {
+        m_players[0]->teleportTo(payload.value(QStringLiteral("p0x")).toInt(m_players[0]->getX()),
+                                 payload.value(QStringLiteral("p0y")).toInt(m_players[0]->getY()));
+    }
+    if (m_players[1]) {
+        m_players[1]->teleportTo(payload.value(QStringLiteral("p1x")).toInt(m_players[1]->getX()),
+                                 payload.value(QStringLiteral("p1y")).toInt(m_players[1]->getY()));
+    }
+
+    const int stateValue = payload.value(QStringLiteral("gameState")).toInt(static_cast<int>(GameState::PLAYING));
+    const GameState remoteState = (stateValue >= static_cast<int>(GameState::START)
+                                   && stateValue <= static_cast<int>(GameState::WIN))
+                                      ? static_cast<GameState>(stateValue)
+                                      : GameState::PLAYING;
+
+    if (remoteState == GameState::GAME_OVER) {
+        m_state = GameState::GAME_OVER;
+        m_timer->stop();
+        emit timerTick(m_timeRemaining);
+        emit gameUpdated();
+        emit gameOver(false, m_score);
+        return;
+    }
+
+    if (remoteState == GameState::WIN) {
+        m_state = GameState::WIN;
+        m_timer->stop();
+        emit timerTick(m_timeRemaining);
+        emit gameUpdated();
+        emit gameOver(true, m_score);
+        return;
+    }
+
+    if (remoteState == GameState::PAUSED) {
+        m_state = GameState::PAUSED;
+        m_timer->stop();
+    } else if (remoteState == GameState::PLAYING) {
+        m_state = GameState::PLAYING;
+        if (!m_timer->isActive()) {
+            m_timer->start();
+        }
+    } else {
+        m_state = remoteState;
+        m_timer->stop();
+    }
+
+    emit timerTick(m_timeRemaining);
+    if (announceConnection) {
+        emit clueRevealed("Connected to host. You are Player 2.");
+    }
+    emit gameUpdated();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -603,6 +736,7 @@ void Game::startLevel(int levelIndex, Difficulty diff)
         const QPoint secondarySpawn = findSecondarySpawn(*m_currentLevel, spawn);
         m_players[1] = std::make_unique<Player>(secondarySpawn.x(), secondarySpawn.y());
     }
+    applySharedCoins(m_sharedCoinsCollected);
     resetTreasureReachState();
     m_levelTimeElapsed = 0;
     if (m_timeRemaining <= 0) {
@@ -613,6 +747,7 @@ void Game::startLevel(int levelIndex, Difficulty diff)
     emit timerTick(m_timeRemaining);
     emit gameUpdated();
     m_timer->start();
+    sendAuthoritativeState();
 }
 
 void Game::nextLevel()
@@ -663,6 +798,7 @@ bool Game::loadGame(const QString& filepath)
 {
     m_multiplayerMode = false;
     resetTreasureReachState();
+    m_sharedCoinsCollected = 0;
     QFile file(filepath);
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
@@ -803,16 +939,8 @@ void Game::handleInputForPlayer(int playerIndex, Direction dir)
     }
     if (interaction.coinCollected) {
         if (m_multiplayerMode) {
-            const int sharedCoins = activePlayer->getCoinsCollected();
-            for (auto& maybePlayer : m_players) {
-                if (!maybePlayer) {
-                    continue;
-                }
-                while (maybePlayer->getCoinsCollected() < sharedCoins) {
-                    maybePlayer->collectCoin();
-                }
-            }
-            emit coinCollected(sharedCoins);
+            applySharedCoins(activePlayer->getCoinsCollected());
+            emit coinCollected(m_sharedCoinsCollected);
         } else {
             emit coinCollected(interaction.coinsCollectedTotal);
         }
@@ -859,6 +987,7 @@ void Game::handleInputForPlayer(int playerIndex, Direction dir)
     }
 
     emit gameUpdated();
+    sendAuthoritativeState();
 }
 
 void Game::pause()
@@ -869,6 +998,7 @@ void Game::pause()
     m_state = GameState::PAUSED;
     m_timer->stop();
     emit gameUpdated();
+    sendAuthoritativeState();
 }
 
 void Game::resume()
@@ -879,6 +1009,7 @@ void Game::resume()
     m_state = GameState::PLAYING;
     m_timer->start();
     emit gameUpdated();
+    sendAuthoritativeState();
 }
 
 GameState Game::state() const
@@ -928,13 +1059,7 @@ QString Game::currentLevelName() const
 
 int Game::coinsCollected() const
 {
-    int sharedCoins = 0;
-    for (const auto& maybePlayer : m_players) {
-        if (maybePlayer) {
-            sharedCoins = qMax(sharedCoins, maybePlayer->getCoinsCollected());
-        }
-    }
-    return sharedCoins;
+    return m_sharedCoinsCollected;
 }
 
 QPoint Game::playerPosition(int playerIndex) const
@@ -1001,24 +1126,30 @@ void Game::onTick()
         }
     }
 
-    if (m_timeRemaining > 0) {
-        m_timeRemaining -= 1;
-    }
-    if (m_timeRemaining < 0) {
-        m_timeRemaining = 0;
-    }
+    const bool advancesSharedClock = !m_multiplayerMode || m_localPlayerIndex == 0;
+    if (advancesSharedClock) {
+        if (m_timeRemaining > 0) {
+            m_timeRemaining -= 1;
+        }
+        if (m_timeRemaining < 0) {
+            m_timeRemaining = 0;
+        }
 
-    m_runTimeElapsed += 1;
-    m_levelTimeElapsed += 1;
+        m_runTimeElapsed += 1;
+        m_levelTimeElapsed += 1;
+    }
 
     emit timerTick(m_timeRemaining);
 
-    if (m_timeRemaining == 0) {
+    if (advancesSharedClock && m_timeRemaining == 0) {
         endRunWithFailure();
         return;
     }
 
     emit gameUpdated();
+    if (advancesSharedClock) {
+        sendAuthoritativeState();
+    }
 }
 
 void Game::endRunWithFailure()
@@ -1033,10 +1164,9 @@ void Game::endRunWithFailure()
         m_highScore = finalScore;
     }
 
+    sendAuthoritativeState();
     emit gameUpdated();
     emit gameOver(false, finalScore);
-
-    m_score = 0;
 }
 
 void Game::resetTreasureReachState()
@@ -1091,8 +1221,16 @@ void Game::handlePlayerReachedTreasure(int playerIndex)
     m_playerReachedTreasure[playerIndex] = true;
     const bool allReady = m_playerReachedTreasure[0] && m_playerReachedTreasure[1];
     if (!allReady) {
+        sendAuthoritativeState();
         emit waitingForTeammate(playerIndex);
         emit clueRevealed("You reached the treasure. Wait for your teammate.");
+        emit gameUpdated();
+        return;
+    }
+
+    if (m_localPlayerIndex != 0) {
+        sendAuthoritativeState();
+        emit clueRevealed("Both players reached the treasure. Waiting for host to sync the next level.");
         emit gameUpdated();
         return;
     }

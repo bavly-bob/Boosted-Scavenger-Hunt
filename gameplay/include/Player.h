@@ -39,8 +39,10 @@ public:
 
     void move(Direction dir, const Level& level);
     void collectCoin();
+    void setCoinsCollected(int coins);
     int  getCoinsCollected() const;
     bool canEnterTreasureRoom() const;
+    void teleportTo(int x, int y);
 
     bool isAtTarget() const;
 

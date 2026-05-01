@@ -91,7 +91,15 @@ inline GameMessage makeStateSync(uint32_t seq,
                                   int lootRooms,
                                   int runTime,
                                   int levelTime,
-                                  int timeRemaining)
+                                  int timeRemaining,
+                                  int sharedCoins,
+                                  int gameState,
+                                  int p0x,
+                                  int p0y,
+                                  int p1x,
+                                  int p1y,
+                                  bool p0ReachedTreasure,
+                                  bool p1ReachedTreasure)
 {
     QJsonObject p;
     p[QStringLiteral("levelIndex")]      = levelIndex;
@@ -104,6 +112,14 @@ inline GameMessage makeStateSync(uint32_t seq,
     p[QStringLiteral("runTimeSeconds")]  = runTime;
     p[QStringLiteral("levelTimeSeconds")]= levelTime;
     p[QStringLiteral("timeRemaining")]   = timeRemaining;
+    p[QStringLiteral("sharedCoins")]     = sharedCoins;
+    p[QStringLiteral("gameState")]       = gameState;
+    p[QStringLiteral("p0x")]             = p0x;
+    p[QStringLiteral("p0y")]             = p0y;
+    p[QStringLiteral("p1x")]             = p1x;
+    p[QStringLiteral("p1y")]             = p1y;
+    p[QStringLiteral("p0ReachedTreasure")] = p0ReachedTreasure;
+    p[QStringLiteral("p1ReachedTreasure")] = p1ReachedTreasure;
     return { MsgType::StateSync, seq, p };
 }
 
