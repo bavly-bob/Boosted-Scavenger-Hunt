@@ -9,6 +9,9 @@
 #include <QStringList>
 #include <QtGlobal>
 #include <QSoundEffect>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QHostAddress>
 
 #include <memory>
 
@@ -112,4 +115,10 @@ private slots:
 
 private:
     void endRunWithFailure();
+
+    bool m_isMultiplayer = false;
+    bool m_isHost = false;
+
+    QTcpServer* m_server = nullptr;
+    QTcpSocket* m_socket = nullptr;
 };

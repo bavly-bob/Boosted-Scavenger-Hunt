@@ -19,6 +19,9 @@
 #include <QCoreApplication>
 #include <QUrl>
 #include <QDebug>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QHostAddress>
 
 namespace {
 QString findDifficultyConfigPath()
@@ -122,17 +125,55 @@ void Game::startNewGame(Difficulty diff)
 
 void Game::startMultiplayerMode()
 {
-    // TODO: Initialize client connection and transition to multiplayer game state
+    m_isMultiplayer = true;
+
+    // Put game into playing state
+    m_state = GameState::PLAYING;
+
+    qDebug() << "Multiplayer started!";
 }
 
 void Game::hostMultiplayerSession(int port)
 {
-    // TODO: Start server, listen on port, wait for peer to join
+m_isHost = true;
+
+    m_server = new QTcpServer(this);
+
+    if (!m_server->listen(QHostAddress::Any, port)) {
+        qDebug() << "Server failed to start!";
+        return;
+    }
+
+    qDebug() << "Server started. Waiting for player...";
+
+    connect(m_server, &QTcpServer::newConnection, this, [=]() {
+        m_socket = m_server->nextPendingConnection();
+
+        qDebug() << "Player connected!";
+
+        startMultiplayerMode();
+    });
 }
 
 void Game::joinMultiplayerSession(const QString& host, int port)
 {
-    // TODO: Connect client to host and sync game state
+    m_isHost = false;
+
+    m_socket = new QTcpSocket(this);
+
+    qDebug() << "Connecting to host...";
+
+    m_socket->connectToHost(host, port);
+
+    connect(m_socket, &QTcpSocket::connected, this, [=]() {
+        qDebug() << "Connected to server!";
+
+        startMultiplayerMode();
+    });
+
+    connect(m_socket, &QTcpSocket::errorOccurred, this, [=]() {
+        qDebug() << "Connection failed!";
+    });
 }
 
 void Game::startLevel(int levelIndex, Difficulty diff)
