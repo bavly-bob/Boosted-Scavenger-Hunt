@@ -50,6 +50,12 @@ int main(int argc, char *argv[])
         gameWindow->startNewGame(diff);
     });
 
+    QObject::connect(&menu, &MainMenu::multiplayerRequested, [&]() {
+        menu.hide();
+        setupGameWindow();
+        gameWindow->startMultiplayerGame();
+    });
+
     menu.show();
     return app.exec();
 }

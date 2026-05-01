@@ -4,20 +4,19 @@
 #include <QString>
 #include <functional>
 
-class QNetworkAccessManager;
-
 class AIHelper : public QObject {
-    Q_OBJECT
-
-    QNetworkAccessManager* m_net = nullptr;
     QString m_apiKey;
     QString m_apiUrl;
     QString m_model;
+
+    QString requestRephrase(const QString& text) const;
+    bool canUseHttpEndpoint() const;
 
 public:
     explicit AIHelper(QObject* parent = nullptr);
 
     bool isEnabled() const;
+    bool isConnected(int timeoutMs = 1500) const;
 
     void rephrase(const QString& text, std::function<void(QString)> callback);
 };

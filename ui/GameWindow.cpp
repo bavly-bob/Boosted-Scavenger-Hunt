@@ -16,12 +16,16 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLinearGradient>
+#include <QLineEdit>
+#include <QMessageBox>
 #include <QPainter>
 #include <QRadialGradient>
 #include <QTimer>
 #include <QPushButton>
+#include <Qt>
 
 
 namespace {
@@ -230,7 +234,9 @@ GameWindow::GameWindow(QWidget *parent)
     });
     connect(m_hudQuitBtn, &QPushButton::clicked, this, [this](){
         m_game->pause();
-        m_game->saveGame("save.json");
+        if (!m_game->isMultiplayerMode()) {
+            m_game->saveGame("save.json");
+        }
         m_gameOverOverlay->hide();
         hide();
         emit quitToMainMenuRequested();
@@ -241,15 +247,20 @@ GameWindow::GameWindow(QWidget *parent)
     connect(m_game, &Game::clueRevealed,      this, &GameWindow::onClueRevealed);
     connect(m_game, &Game::wallOpened,        this, &GameWindow::onWallOpened);
     connect(m_game, &Game::treasureUnlocked,  this, &GameWindow::onTreasureUnlocked);
+    connect(m_game, &Game::waitingForTeammate, this, &GameWindow::onWaitingForTeammate);
     connect(m_game, &Game::gameOver,          this, &GameWindow::onGameOver);
 
     m_renderTimer->setInterval(16);
     connect(m_renderTimer, &QTimer::timeout, this, [this]() {
         m_deltaMs = static_cast<float>(m_frameTimer.restart());
         if (m_game->state() == GameState::PLAYING) {
-            const Player* p = m_game->player();
-            if (p) {
-                const_cast<Player*>(p)->updateMovement(m_deltaMs / 1000.0f);
+            const float dtSec = m_deltaMs / 1000.0f;
+            for (int i = 0; i < m_game->playerCount(); ++i) {
+                const Player* p = m_game->player(i);
+                if (!p) {
+                    continue;
+                }
+                const_cast<Player*>(p)->updateMovement(dtSec);
                 const_cast<Player*>(p)->advanceAnimation();
             }
         }
@@ -599,10 +610,11 @@ void GameWindow::loadAssets()
 void GameWindow::injectSprites()
 {
     const Level*  level  = m_game->level();
-    const Player* player = m_game->player();
-
-    if (player) {
-        const_cast<Player*>(player)->setSpriteManager(&m_spriteManager);
+    for (int i = 0; i < m_game->playerCount(); ++i) {
+        const Player* player = m_game->player(i);
+        if (player) {
+            const_cast<Player*>(player)->setSpriteManager(&m_spriteManager);
+        }
     }
 
     if (level) {
@@ -631,6 +643,91 @@ void GameWindow::startNewGame(Difficulty difficulty)
     setFocus();
 }
 
+void GameWindow::startMultiplayerGame()
+{
+    loadAssets();
+    ensureLevelsConfigured();
+    m_statusText.clear();
+    m_statusIsAiHint = false;
+    m_pauseOverlay->hide();
+    m_gameOverOverlay->hide();
+
+    const QStringList modeChoices = {
+        QStringLiteral("Host Room"),
+        QStringLiteral("Join Room")
+    };
+    bool modeOk = false;
+    const QString mode = QInputDialog::getItem(this,
+                                               QStringLiteral("Multiplayer Mode"),
+                                               QStringLiteral("Choose mode:"),
+                                               modeChoices,
+                                               0,
+                                               false,
+                                               &modeOk);
+    if (!modeOk) {
+        emit quitToMainMenuRequested();
+        return;
+    }
+
+    struct RoomOption {
+        QString label;
+        int port;
+    };
+    const QVector<RoomOption> rooms = {
+        {QStringLiteral("Room 1 (Port 47001)"), 47001},
+        {QStringLiteral("Room 2 (Port 47002)"), 47002},
+        {QStringLiteral("Room 3 (Port 47003)"), 47003},
+        {QStringLiteral("Room 4 (Port 47004)"), 47004}
+    };
+    QStringList roomLabels;
+    roomLabels.reserve(rooms.size());
+    for (const RoomOption& room : rooms) {
+        roomLabels.push_back(room.label);
+    }
+    bool roomOk = false;
+    const QString selectedRoom = QInputDialog::getItem(this,
+                                                        QStringLiteral("Choose Room"),
+                                                        QStringLiteral("Select room:"),
+                                                        roomLabels,
+                                                        0,
+                                                        false,
+                                                        &roomOk);
+    if (!roomOk) {
+        emit quitToMainMenuRequested();
+        return;
+    }
+
+    int selectedPort = rooms.front().port;
+    for (const RoomOption& room : rooms) {
+        if (room.label == selectedRoom) {
+            selectedPort = room.port;
+            break;
+        }
+    }
+
+    show();
+    setFocus();
+
+    if (mode == QStringLiteral("Host Room")) {
+        m_game->startMultiplayerMode();
+        m_game->hostMultiplayerSession(selectedPort);
+        return;
+    }
+
+    bool hostOk = false;
+    const QString host = QInputDialog::getText(this,
+                                               QStringLiteral("Join Host"),
+                                               QStringLiteral("Enter host/IP to join room:"),
+                                               QLineEdit::Normal,
+                                               QStringLiteral("127.0.0.1"),
+                                               &hostOk);
+    if (!hostOk || host.trimmed().isEmpty()) {
+        emit quitToMainMenuRequested();
+        return;
+    }
+    m_game->joinMultiplayerSession(host.trimmed(), selectedPort);
+}
+
 bool GameWindow::loadSavedGame(const QString& filepath)
 {
     loadAssets();
@@ -652,11 +749,18 @@ bool GameWindow::loadSavedGame(const QString& filepath)
 void GameWindow::snapCameraToPlayer()
 {
     const Level*  level  = m_game->level();
-    const Player* player = m_game->player();
-    if (!level || !player) { m_cameraPx = QPointF(0.0, 0.0); return; }
+    const Player* player1 = m_game->player(0);
+    if (!level || !player1) { m_cameraPx = QPointF(0.0, 0.0); return; }
 
-    const qreal playerPxX = player->getX() * TILE_SIZE + TILE_SIZE / 2.0;
-    const qreal playerPxY = player->getY() * TILE_SIZE + TILE_SIZE / 2.0;
+    qreal playerPxX = player1->getX() * TILE_SIZE + TILE_SIZE / 2.0;
+    qreal playerPxY = player1->getY() * TILE_SIZE + TILE_SIZE / 2.0;
+    const Player* player2 = m_game->player(1);
+    if (m_game->isMultiplayerMode() && player2) {
+        const qreal p2x = player2->getX() * TILE_SIZE + TILE_SIZE / 2.0;
+        const qreal p2y = player2->getY() * TILE_SIZE + TILE_SIZE / 2.0;
+        playerPxX = (playerPxX + p2x) / 2.0;
+        playerPxY = (playerPxY + p2y) / 2.0;
+    }
 
     const int mapPixelW = level->getWidth()  * TILE_SIZE;
     const int mapPixelH = level->getHeight() * TILE_SIZE;
@@ -856,14 +960,17 @@ void GameWindow::paintEvent(QPaintEvent *event)
         p.drawRoundedRect(hintsRect.adjusted(-4, -1, 4, 1), 3, 3);
         QFont hf = p.font(); hf.setPointSize(7); p.setFont(hf);
         p.setPen(QColor(160, 160, 175, 170));
-        p.drawText(hintsRect, Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("WASD / ↑↓←→ : Move   •   Esc : Pause"));
+        const QString controlsText = m_game->isMultiplayerMode()
+            ? QStringLiteral("P1: WASD   •   P2: Arrows   •   Esc: Pause")
+            : QStringLiteral("WASD / ↑↓←→ : Move   •   Esc : Pause");
+        p.drawText(hintsRect, Qt::AlignLeft | Qt::AlignVCenter, controlsText);
         p.restore();
     }
 
     const Level*  level  = m_game->level();
-    const Player* player = m_game->player();
-    if (!level || !player) return;
+    const Player* player1 = m_game->player(0);
+    const Player* player2 = m_game->player(1);
+    if (!level || !player1) return;
     p.save();
     p.translate(0, hudHeight());
 
@@ -872,8 +979,14 @@ void GameWindow::paintEvent(QPaintEvent *event)
     const int viewPixelW = width();
     const int viewPixelH = height() - hudHeight();
 
-    const qreal playerPxX = player->getX() * TILE_SIZE + TILE_SIZE / 2.0;
-    const qreal playerPxY = player->getY() * TILE_SIZE + TILE_SIZE / 2.0;
+    qreal playerPxX = player1->getX() * TILE_SIZE + TILE_SIZE / 2.0;
+    qreal playerPxY = player1->getY() * TILE_SIZE + TILE_SIZE / 2.0;
+    if (m_game->isMultiplayerMode() && player2) {
+        const qreal p2x = player2->getX() * TILE_SIZE + TILE_SIZE / 2.0;
+        const qreal p2y = player2->getY() * TILE_SIZE + TILE_SIZE / 2.0;
+        playerPxX = (playerPxX + p2x) / 2.0;
+        playerPxY = (playerPxY + p2y) / 2.0;
+    }
 
     qreal targetCamX = qBound<qreal>(0.0, playerPxX - viewPixelW / 2.0,
                                      qMax<qreal>(0.0, mapPixelW - viewPixelW));
@@ -1005,18 +1118,40 @@ void GameWindow::paintEvent(QPaintEvent *event)
             enemy->draw(p, TILE_SIZE);
         }
     }
-    player->draw(p, TILE_SIZE);
+    player1->draw(p, TILE_SIZE);
+    if (m_game->isMultiplayerMode() && player2) {
+        player2->draw(p, TILE_SIZE);
+        const int p2cx = player2->getX() * TILE_SIZE + TILE_SIZE / 2;
+        const int p2cy = player2->getY() * TILE_SIZE + TILE_SIZE / 2;
+        p.setPen(QPen(QColor(255, 120, 80, 180), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QPoint(p2cx, p2cy), TILE_SIZE / 2 - 2, TILE_SIZE / 2 - 2);
+    }
     p.restore();
-    const int px = player->getX(), py = player->getY();
+    const int px1 = player1->getX();
+    const int py1 = player1->getY();
+    const bool hasPlayer2 = (m_game->isMultiplayerMode() && player2);
+    const int px2 = hasPlayer2 ? player2->getX() : px1;
+    const int py2 = hasPlayer2 ? player2->getY() : py1;
     const int r  = VISIBILITY_RADIUS_TILES;
 
     // Mark newly visible tiles as explored
     if (!m_explored.isEmpty()) {
-        for (int vy = qMax(0, py - r); vy <= qMin(level->getHeight() - 1, py + r); ++vy) {
-            for (int vx = qMax(0, px - r); vx <= qMin(level->getWidth() - 1, px + r); ++vx) {
-                const int dx = vx - px, dy = vy - py;
-                if (dx * dx + dy * dy <= r * r)
+        const int minY = qMax(0, qMin(py1, py2) - r);
+        const int maxY = qMin(level->getHeight() - 1, qMax(py1, py2) + r);
+        const int minX = qMax(0, qMin(px1, px2) - r);
+        const int maxX = qMin(level->getWidth() - 1, qMax(px1, px2) + r);
+        for (int vy = minY; vy <= maxY; ++vy) {
+            for (int vx = minX; vx <= maxX; ++vx) {
+                const int d1x = vx - px1;
+                const int d1y = vy - py1;
+                const bool visibleP1 = (d1x * d1x + d1y * d1y) <= r * r;
+                const int d2x = vx - px2;
+                const int d2y = vy - py2;
+                const bool visibleP2 = hasPlayer2 && ((d2x * d2x + d2y * d2y) <= r * r);
+                if (visibleP1 || visibleP2) {
                     m_explored[vy][vx] = true;
+                }
             }
         }
     }
@@ -1024,8 +1159,13 @@ void GameWindow::paintEvent(QPaintEvent *event)
     for (int fy = startY; fy <= endY; ++fy) {
         for (int fx = startX; fx <= endX; ++fx) {
             const bool explored   = !m_explored.isEmpty() && m_explored.at(fy).at(fx);
-            const int  dx = fx - px, dy = fy - py;
-            const bool visibleNow = (dx * dx + dy * dy) <= (r * r);
+            const int d1x = fx - px1;
+            const int d1y = fy - py1;
+            const bool visibleP1 = (d1x * d1x + d1y * d1y) <= (r * r);
+            const int d2x = fx - px2;
+            const int d2y = fy - py2;
+            const bool visibleP2 = hasPlayer2 && ((d2x * d2x + d2y * d2y) <= (r * r));
+            const bool visibleNow = visibleP1 || visibleP2;
 
             QColor overlay;
             if (!explored) {
@@ -1034,7 +1174,9 @@ void GameWindow::paintEvent(QPaintEvent *event)
                 overlay = QColor(0, 0, 0, 160);
             } else {
                 // Soft radial vignette within visible area
-                const double dist = std::sqrt(dx * dx + dy * dy);
+                const double d1 = std::sqrt(static_cast<double>(d1x * d1x + d1y * d1y));
+                const double d2 = std::sqrt(static_cast<double>(d2x * d2x + d2y * d2y));
+                const double dist = hasPlayer2 ? qMin(d1, d2) : d1;
                 const int alpha   = static_cast<int>((dist / r) * 80.0);
                 overlay = QColor(0, 0, 0, qBound(0, alpha, 80));
             }
@@ -1045,14 +1187,20 @@ void GameWindow::paintEvent(QPaintEvent *event)
         }
     }
     {
-        const int gScreenX = px * TILE_SIZE - camX + TILE_SIZE / 2;
-        const int gScreenY = py * TILE_SIZE - camY + TILE_SIZE / 2;
-        QRadialGradient glow(gScreenX, gScreenY, r * TILE_SIZE);
-        glow.setColorAt(0.0, QColor(100, 150, 255, 18));
-        glow.setColorAt(0.6, QColor(60, 100, 200, 8));
-        glow.setColorAt(1.0, QColor(0, 0, 0, 0));
-        p.fillRect(QRect(gScreenX - r * TILE_SIZE, gScreenY - r * TILE_SIZE,
-                         r * TILE_SIZE * 2, r * TILE_SIZE * 2), glow);
+        const auto drawPlayerGlow = [&](int px, int py, const QColor& inner, const QColor& mid) {
+            const int gScreenX = px * TILE_SIZE - camX + TILE_SIZE / 2;
+            const int gScreenY = py * TILE_SIZE - camY + TILE_SIZE / 2;
+            QRadialGradient glow(gScreenX, gScreenY, r * TILE_SIZE);
+            glow.setColorAt(0.0, inner);
+            glow.setColorAt(0.6, mid);
+            glow.setColorAt(1.0, QColor(0, 0, 0, 0));
+            p.fillRect(QRect(gScreenX - r * TILE_SIZE, gScreenY - r * TILE_SIZE,
+                             r * TILE_SIZE * 2, r * TILE_SIZE * 2), glow);
+        };
+        drawPlayerGlow(px1, py1, QColor(100, 150, 255, 18), QColor(60, 100, 200, 8));
+        if (hasPlayer2) {
+            drawPlayerGlow(px2, py2, QColor(255, 150, 100, 14), QColor(200, 90, 60, 7));
+        }
     }
 
     if (!m_fogPatchOverlay.isNull()) {
@@ -1172,10 +1320,35 @@ void GameWindow::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    const Direction dir = InputHandler::keyToDirection(event->key());
-    if (dir != Direction::None) {
-        m_game->handleInput(dir);
-        return;
+    if (m_game->isMultiplayerMode()) {
+        Direction p1Dir = Direction::None;
+        Direction p2Dir = Direction::None;
+        switch (event->key()) {
+        case Qt::Key_W: p1Dir = Direction::Up; break;
+        case Qt::Key_S: p1Dir = Direction::Down; break;
+        case Qt::Key_A: p1Dir = Direction::Left; break;
+        case Qt::Key_D: p1Dir = Direction::Right; break;
+        case Qt::Key_Up: p2Dir = Direction::Up; break;
+        case Qt::Key_Down: p2Dir = Direction::Down; break;
+        case Qt::Key_Left: p2Dir = Direction::Left; break;
+        case Qt::Key_Right: p2Dir = Direction::Right; break;
+        default:
+            break;
+        }
+        if (p1Dir != Direction::None) {
+            m_game->handleInputForPlayer(0, p1Dir);
+            return;
+        }
+        if (p2Dir != Direction::None) {
+            m_game->handleInputForPlayer(1, p2Dir);
+            return;
+        }
+    } else {
+        const Direction dir = InputHandler::keyToDirection(event->key());
+        if (dir != Direction::None) {
+            m_game->handleInput(dir);
+            return;
+        }
     }
 
     QWidget::keyPressEvent(event);
@@ -1235,6 +1408,14 @@ void GameWindow::onTreasureUnlocked()
     m_objectiveFlashActive = true;
     m_objectiveFlashTimer.start();
     update();
+}
+
+void GameWindow::onWaitingForTeammate(int playerIndex)
+{
+    const QString playerLabel = (playerIndex == 0) ? "Player 1" : "Player 2";
+    QMessageBox::information(this,
+                             "Wait For Teammate",
+                             playerLabel + " reached the treasure. Wait until both players arrive.");
 }
 
 void GameWindow::onGameOver(bool won, int score)
@@ -1319,8 +1500,9 @@ float GameWindow::statusOpacity() const
 void GameWindow::drawMiniMap(QPainter& p) const
 {
     const Level* level = m_game->level();
-    const Player* player = m_game->player();
-    if (!level || !player || m_explored.isEmpty()) return;
+    const Player* player1 = m_game->player(0);
+    const Player* player2 = m_game->player(1);
+    if (!level || !player1 || m_explored.isEmpty()) return;
 
     p.save();
     const int mapW = level->getWidth();
@@ -1379,15 +1561,24 @@ void GameWindow::drawMiniMap(QPainter& p) const
         }
     }
 
-    // Player — cyan circle with glow halo, blinks every 600 ms
+    // Players: P1 cyan, P2 orange; blink every 600 ms
     if (m_frameTimer.elapsed() % 1000 < 600) {
-        const int cx = player->getX() * cellPx + cellPx / 2;
-        const int cy = player->getY() * cellPx + cellPx / 2;
+        const int cx = player1->getX() * cellPx + cellPx / 2;
+        const int cy = player1->getY() * cellPx + cellPx / 2;
         const int r  = qMax(2, cellPx);
         p.setBrush(QColor(0, 200, 220, 60));
         p.drawEllipse(QPoint(cx, cy), r + 2, r + 2);
         p.setBrush(QColor(0, 240, 255));
         p.drawEllipse(QPoint(cx, cy), r, r);
+
+        if (m_game->isMultiplayerMode() && player2) {
+            const int c2x = player2->getX() * cellPx + cellPx / 2;
+            const int c2y = player2->getY() * cellPx + cellPx / 2;
+            p.setBrush(QColor(255, 140, 90, 60));
+            p.drawEllipse(QPoint(c2x, c2y), r + 2, r + 2);
+            p.setBrush(QColor(255, 170, 90));
+            p.drawEllipse(QPoint(c2x, c2y), r, r);
+        }
     }
 
     p.restore();

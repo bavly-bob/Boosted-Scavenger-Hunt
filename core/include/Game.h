@@ -10,6 +10,7 @@
 #include <QtGlobal>
 #include <QSoundEffect>
 
+#include <array>
 #include <memory>
 
 class ClueManager;
@@ -39,7 +40,9 @@ class Game : public QObject {
 
     QStringList m_levelFiles;
     std::unique_ptr<Level> m_currentLevel;
-    std::unique_ptr<Player> m_player;
+    std::array<std::unique_ptr<Player>, 2> m_players;
+    bool m_multiplayerMode;
+    std::array<bool, 2> m_playerReachedTreasure;
     std::unique_ptr<ClueManager> m_clueManager;
     std::unique_ptr<AIHelper> m_aiHelper;
     QTimer* m_timer;
@@ -79,6 +82,7 @@ public:
     bool hasSavedGame(const QString& filepath) const;
 
     void handleInput(Direction dir);
+    void handleInputForPlayer(int playerIndex, Direction dir);
     void pause();
     void resume();
 
@@ -92,10 +96,12 @@ public:
     int currentLevelIndex() const;
     QString currentLevelName() const;
     int coinsCollected() const;
-    QPoint playerPosition() const;
+    QPoint playerPosition(int playerIndex = 0) const;
+    int playerCount() const;
+    bool isMultiplayerMode() const;
 
     const Level* level() const;
-    const Player* player() const;
+    const Player* player(int playerIndex = 0) const;
 
 signals:
     void gameUpdated();
@@ -103,6 +109,7 @@ signals:
     void coinCollected(int total);
     void wallOpened();
     void treasureUnlocked();
+    void waitingForTeammate(int playerIndex);
     void gameOver(bool won, int score);
     void timerTick(int secondsLeft);
     void levelChanged(int levelIndex);
@@ -112,4 +119,7 @@ private slots:
 
 private:
     void endRunWithFailure();
+    void resetTreasureReachState();
+    bool isCellOccupiedByOtherPlayer(int playerIndex, int x, int y) const;
+    void handlePlayerReachedTreasure(int playerIndex);
 };

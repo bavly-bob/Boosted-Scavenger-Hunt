@@ -1,55 +1,143 @@
 #include "AIHelper.h"
 
-#include <QNetworkAccessManager>
-#include <QNetworkRequest>
-#include <QNetworkReply>
+#include <boost/asio.hpp>
+
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
+#include <QMetaObject>
 #include <QTimer>
-#include <QByteArray>
 #include <QUrl>
-#include <QCoreApplication>
+#include <QByteArray>
+#include <Qt>
+
+#include <array>
+#include <thread>
+
+namespace {
+struct ParsedHttpUrl {
+    bool valid = false;
+    QString host;
+    QString service;
+    QString path;
+};
+
+ParsedHttpUrl parseHttpUrl(const QString& raw)
+{
+    ParsedHttpUrl parsed;
+    const QUrl url(raw);
+    if (!url.isValid() || url.scheme().toLower() != QStringLiteral("http")) {
+        return parsed;
+    }
+    if (url.host().isEmpty()) {
+        return parsed;
+    }
+
+    parsed.host = url.host();
+    parsed.service = QString::number(url.port(80));
+    parsed.path = url.path();
+    if (parsed.path.isEmpty()) {
+        parsed.path = QStringLiteral("/");
+    }
+    if (!url.query().isEmpty()) {
+        parsed.path += QStringLiteral("?") + url.query();
+    }
+
+    parsed.valid = true;
+    return parsed;
+}
+
+QString extractTextFromResponse(const QJsonObject& root)
+{
+    const QJsonArray choices = root.value("choices").toArray();
+    if (!choices.isEmpty()) {
+        const QJsonObject first = choices.at(0).toObject();
+        const QJsonObject message = first.value("message").toObject();
+        const QString messageContent = message.value("content").toString().trimmed();
+        if (!messageContent.isEmpty()) {
+            return messageContent;
+        }
+        const QString text = first.value("text").toString().trimmed();
+        if (!text.isEmpty()) {
+            return text;
+        }
+    }
+
+    const QString response = root.value("response").toString().trimmed();
+    if (!response.isEmpty()) {
+        return response;
+    }
+
+    const QString text = root.value("text").toString().trimmed();
+    if (!text.isEmpty()) {
+        return text;
+    }
+
+    return QString();
+}
+}
 
 AIHelper::AIHelper(QObject* parent)
-    : QObject(parent), m_net(new QNetworkAccessManager(this))
+    : QObject(parent)
 {
     const QByteArray key = qgetenv("AI_API_KEY");
     if (!key.isEmpty()) {
         m_apiKey = QString::fromUtf8(key);
     }
+
     const QByteArray url = qgetenv("AI_API_URL");
     if (!url.isEmpty()) {
         m_apiUrl = QString::fromUtf8(url);
     } else {
-        if (m_apiKey.startsWith("sk-or-")) {
-            m_apiUrl = QStringLiteral("https://openrouter.ai/v1/chat/completions");
-        } else {
-            m_apiUrl = QStringLiteral("https://api.openai.com/v1/chat/completions");
-        }
+        m_apiUrl = QStringLiteral("http://127.0.0.1:11434/v1/chat/completions");
     }
-    const QByteArray modelEnv = qgetenv("AI_MODEL");
-    if (!modelEnv.isEmpty()) {
-        m_model = QString::fromUtf8(modelEnv);
+
+    const QByteArray model = qgetenv("AI_MODEL");
+    if (!model.isEmpty()) {
+        m_model = QString::fromUtf8(model);
     } else {
-        if (m_apiKey.startsWith("sk-or-")) {
-            m_model = QStringLiteral("elephant-alpha");
-        } else {
-            m_model = QStringLiteral("gpt-3.5-turbo");
-        }
+        m_model = QStringLiteral("gpt-3.5-turbo");
     }
 }
 
 bool AIHelper::isEnabled() const
 {
-    return !m_apiKey.isEmpty();
+    return canUseHttpEndpoint();
 }
 
-void AIHelper::rephrase(const QString& text, std::function<void(QString)> callback)
+bool AIHelper::canUseHttpEndpoint() const
 {
-    if (!isEnabled()) {
-        QTimer::singleShot(0, [text, callback]() { callback(text); });
-        return;
+    return parseHttpUrl(m_apiUrl).valid;
+}
+
+bool AIHelper::isConnected(int timeoutMs) const
+{
+    Q_UNUSED(timeoutMs);
+    const ParsedHttpUrl endpoint = parseHttpUrl(m_apiUrl);
+    if (!endpoint.valid) {
+        return false;
+    }
+
+    using boost::asio::ip::tcp;
+    boost::asio::io_context io;
+    boost::system::error_code ec;
+
+    tcp::resolver resolver(io);
+    const auto endpoints = resolver.resolve(endpoint.host.toStdString(), endpoint.service.toStdString(), ec);
+    if (ec) {
+        return false;
+    }
+
+    tcp::socket socket(io);
+    boost::asio::connect(socket, endpoints, ec);
+    return !ec;
+}
+
+QString AIHelper::requestRephrase(const QString& text) const
+{
+    const ParsedHttpUrl endpoint = parseHttpUrl(m_apiUrl);
+    if (!endpoint.valid) {
+        return text;
     }
 
     QJsonObject body;
@@ -65,40 +153,91 @@ void AIHelper::rephrase(const QString& text, std::function<void(QString)> callba
     user["role"] = QStringLiteral("user");
     user["content"] = text;
     messages.append(user);
-
     body["messages"] = messages;
-    body["max_tokens"] = 999999;
 
-    QNetworkRequest req{QUrl(m_apiUrl)};
-    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    req.setRawHeader("Authorization", QStringLiteral("Bearer ").append(m_apiKey).toUtf8());
+    const QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
 
-    const QJsonDocument doc(body);
-    QNetworkReply* reply = m_net->post(req, doc.toJson());
+    QString request;
+    request += QStringLiteral("POST %1 HTTP/1.1\r\n").arg(endpoint.path);
+    request += QStringLiteral("Host: %1\r\n").arg(endpoint.host);
+    request += QStringLiteral("Content-Type: application/json\r\n");
+    request += QStringLiteral("Content-Length: %1\r\n").arg(payload.size());
+    if (!m_apiKey.isEmpty()) {
+        request += QStringLiteral("Authorization: Bearer %1\r\n").arg(m_apiKey);
+    }
+    request += QStringLiteral("Connection: close\r\n\r\n");
 
-    connect(reply, &QNetworkReply::finished, this, [reply, text, callback]() {
-        QString out = text;
-        if (reply->error() == QNetworkReply::NoError) {
-            const QByteArray resp = reply->readAll();
-            QJsonParseError err;
-            const QJsonDocument respDoc = QJsonDocument::fromJson(resp, &err);
-            if (err.error == QJsonParseError::NoError && respDoc.isObject()) {
-                QJsonObject obj = respDoc.object();
-                QJsonArray choices = obj.value("choices").toArray();
-                if (!choices.isEmpty()) {
-                    QJsonObject first = choices.at(0).toObject();
-                    QJsonObject message = first.value("message").toObject();
-                    QString content = message.value("content").toString();
-                    if (content.isEmpty()) {
-                        content = first.value("text").toString();
-                    }
-                    if (!content.isEmpty()) {
-                        out = content.trimmed();
-                    }
-                }
-            }
+    using boost::asio::ip::tcp;
+    boost::asio::io_context io;
+    boost::system::error_code ec;
+
+    tcp::resolver resolver(io);
+    const auto endpoints = resolver.resolve(endpoint.host.toStdString(), endpoint.service.toStdString(), ec);
+    if (ec) {
+        return text;
+    }
+
+    tcp::socket socket(io);
+    boost::asio::connect(socket, endpoints, ec);
+    if (ec) {
+        return text;
+    }
+
+    const QByteArray http = request.toUtf8() + payload;
+    boost::asio::write(socket, boost::asio::buffer(http.constData(), static_cast<std::size_t>(http.size())), ec);
+    if (ec) {
+        return text;
+    }
+
+    std::string response;
+    std::array<char, 4096> buf{};
+    while (true) {
+        const std::size_t n = socket.read_some(boost::asio::buffer(buf), ec);
+        if (n > 0) {
+            response.append(buf.data(), n);
         }
-        reply->deleteLater();
-        callback(out);
-    });
+        if (ec == boost::asio::error::eof) {
+            break;
+        }
+        if (ec) {
+            return text;
+        }
+    }
+
+    const std::size_t headerEnd = response.find("\r\n\r\n");
+    if (headerEnd == std::string::npos) {
+        return text;
+    }
+    const std::string statusLine = response.substr(0, response.find("\r\n"));
+    if (statusLine.find(" 2") == std::string::npos) {
+        return text;
+    }
+
+    const QByteArray bodyBytes(response.data() + static_cast<std::ptrdiff_t>(headerEnd + 4),
+                               static_cast<int>(response.size() - (headerEnd + 4)));
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(bodyBytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return text;
+    }
+
+    const QString extracted = extractTextFromResponse(doc.object());
+    return extracted.isEmpty() ? text : extracted;
+}
+
+void AIHelper::rephrase(const QString& text, std::function<void(QString)> callback)
+{
+    if (!isEnabled()) {
+        QTimer::singleShot(0, [text, callback]() {
+            callback(text.trimmed());
+        });
+        return;
+    }
+
+    std::thread([this, text, callback]() {
+        const QString out = requestRephrase(text).trimmed();
+        QMetaObject::invokeMethod(this, [callback, out]() {
+            callback(out);
+        }, Qt::QueuedConnection);
+    }).detach();
 }

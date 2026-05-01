@@ -23,6 +23,7 @@ public:
     explicit GameWindow(QWidget *parent = nullptr);
 
     void startNewGame(Difficulty difficulty);
+    void startMultiplayerGame();
     bool loadSavedGame(const QString& filepath);
 
 signals:
@@ -39,6 +40,7 @@ private slots:
     void onClueRevealed(const QString& text);
     void onWallOpened();
     void onTreasureUnlocked();
+    void onWaitingForTeammate(int playerIndex);
     void onGameOver(bool won, int score);
 
 private:

@@ -13,8 +13,8 @@ if(MSVC)
     add_compile_options(/Zc:__cplusplus /permissive-)
 endif()
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Multimedia)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Multimedia)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Multimedia)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Multimedia)
 find_package(Boost 1.89.0 REQUIRED CONFIG)
 
 set(PROJECT_SOURCES
@@ -44,6 +44,11 @@ set(PROJECT_SOURCES
         systems/include/ClueManager.h systems/src/ClueManager.cpp
         systems/include/InputHandler.h systems/src/InputHandler.cpp
         systems/include/SpriteManager.h systems/src/SpriteManager.cpp
+        networking/include/types.hpp
+        networking/include/connection.hpp networking/src/connection.cpp
+        networking/include/protocol.hpp networking/src/protocol.cpp
+        networking/include/client.hpp networking/src/client.cpp
+        networking/include/server.hpp networking/src/server.cpp
         core/include/AIHelper.h core/src/AIHelper.cpp
         utils/Enums.h
         core/include/Chamber.h
@@ -70,8 +75,8 @@ if(WIN32)
     target_link_libraries(ScavengerHunt PRIVATE ws2_32 mswsock)
 endif()
 
-target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Multimedia Boost::headers)
-target_include_directories(ScavengerHunt PRIVATE . core/include gameplay/include systems/include utils ui)
+target_link_libraries(ScavengerHunt PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Multimedia Boost::headers)
+target_include_directories(ScavengerHunt PRIVATE . core/include gameplay/include systems/include networking/include utils ui)
 
 add_custom_command(TARGET ScavengerHunt POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ScavengerHunt>/levels"
@@ -104,22 +109,59 @@ endif()
 
 enable_testing()
 
-add_executable(test_game tests/test_game.cpp)
-target_include_directories(test_game PRIVATE . core/include gameplay/include systems/include utils ui)
-target_link_libraries(test_game PRIVATE Boost::headers)
+add_executable(test_game
+    tests/test_game.cpp
+    systems/src/DifficultyConfig.cpp
+)
+set_target_properties(test_game PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+target_include_directories(test_game PRIVATE . core/include gameplay/include systems/include networking/include utils ui)
+target_link_libraries(test_game PRIVATE Boost::headers Qt${QT_VERSION_MAJOR}::Core)
 
-add_executable(test_player tests/test_player.cpp)
-target_include_directories(test_player PRIVATE . core/include gameplay/include systems/include utils ui)
-target_link_libraries(test_player PRIVATE Boost::headers)
+add_executable(test_player
+    tests/test_player.cpp
+)
+set_target_properties(test_player PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+target_include_directories(test_player PRIVATE . core/include gameplay/include systems/include networking/include utils ui)
+target_link_libraries(test_player PRIVATE Boost::headers Qt${QT_VERSION_MAJOR}::Core)
 
-add_executable(test_score tests/test_score.cpp)
-target_include_directories(test_score PRIVATE . core/include gameplay/include systems/include utils ui)
-target_link_libraries(test_score PRIVATE Boost::headers)
+add_executable(test_score
+    tests/test_score.cpp
+    gameplay/src/Coin.cpp
+    core/src/GameObject.cpp
+)
+set_target_properties(test_score PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+target_include_directories(test_score PRIVATE . core/include gameplay/include systems/include networking/include utils ui)
+target_link_libraries(test_score PRIVATE Boost::headers Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Gui)
 
-add_executable(test_network tests/test_network.cpp)
-target_include_directories(test_network PRIVATE . core/include gameplay/include systems/include utils ui)
-target_link_libraries(test_network PRIVATE Boost::headers)
+add_executable(test_network
+    tests/test_network.cpp
+    networking/src/protocol.cpp
+)
+set_target_properties(test_network PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+target_include_directories(test_network PRIVATE . core/include gameplay/include systems/include networking/include utils ui)
+target_link_libraries(test_network PRIVATE Boost::headers Qt${QT_VERSION_MAJOR}::Core)
+
+add_executable(test_ai_connection
+    tests/test_ai_connection.cpp
+    core/src/AIHelper.cpp
+)
+set_target_properties(test_ai_connection PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+target_include_directories(test_ai_connection PRIVATE . core/include gameplay/include systems/include networking/include utils ui)
+target_link_libraries(test_ai_connection PRIVATE Boost::headers Qt${QT_VERSION_MAJOR}::Core)
 
 if(WIN32)
     target_link_libraries(test_network PRIVATE ws2_32 mswsock)
+    target_link_libraries(test_ai_connection PRIVATE ws2_32 mswsock)
 endif()
+
+add_test(NAME test_game COMMAND test_game)
+add_test(NAME test_player COMMAND test_player)
+add_test(NAME test_score COMMAND test_score)
+add_test(NAME test_network COMMAND test_network)
+add_test(NAME test_ai_connection COMMAND test_ai_connection)
+
+add_custom_target(run_all_tests
+    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+    DEPENDS test_game test_player test_score test_network test_ai_connection
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)

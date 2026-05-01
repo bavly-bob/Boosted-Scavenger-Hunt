@@ -137,6 +137,12 @@ MainMenu::MainMenu(QWidget *parent)
     connect(backBtn, &QPushButton::clicked, this, [this]{
         m_stackedWidget->setCurrentIndex(0);
     });
+    connect(hostBtn, &QPushButton::clicked, this, [this]{
+        emit multiplayerRequested();
+    });
+    connect(joinBtn, &QPushButton::clicked, this, [this]{
+        emit multiplayerRequested();
+    });
 
     mpLayout->addSpacerItem(new QSpacerItem(0, 25, QSizePolicy::Minimum, QSizePolicy::Expanding));
 
