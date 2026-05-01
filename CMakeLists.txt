@@ -45,6 +45,7 @@ set(PROJECT_SOURCES
         systems/include/InputHandler.h systems/src/InputHandler.cpp
         systems/include/SpriteManager.h systems/src/SpriteManager.cpp
         networking/include/types.hpp
+        networking/include/GameMessage.hpp
         networking/include/connection.hpp networking/src/connection.cpp
         networking/include/protocol.hpp networking/src/protocol.cpp
         networking/include/client.hpp networking/src/client.cpp

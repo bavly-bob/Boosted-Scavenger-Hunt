@@ -11,7 +11,12 @@
 #include <QSoundEffect>
 
 #include <array>
+#include <atomic>
 #include <memory>
+#include <thread>
+
+// Forward-declare Boost.Asio types without pulling in the heavy header here.
+namespace boost { namespace asio { class io_context; namespace ip { class tcp; } } }
 
 class ClueManager;
 class Level;
@@ -56,9 +61,29 @@ class Game : public QObject {
     QSoundEffect m_sfxGameOver;
     QSoundEffect m_sfxBlocked;
     QSoundEffect m_sfxClue;
-    
 
     void initSounds();
+
+    // ── Multiplayer networking ────────────────────────────────────────────────
+    // All socket I/O runs on m_ioThread; Qt signals bridge results back to the
+    // main thread safely.  The io_context and socket are heap-allocated so that
+    // Boost.Asio headers are not exposed to every translation unit that includes
+    // Game.h — only Game.cpp needs to pull in <boost/asio.hpp>.
+    struct NetState;                          // defined in Game.cpp (PIMPL)
+    std::unique_ptr<NetState> m_net;          // null when not in multiplayer
+
+    int           m_localPlayerIndex = 0;     // 0 = host, 1 = joiner
+    std::atomic<uint32_t> m_outSeq{0};        // monotonic per-sender counter (N5)
+    uint32_t      m_lastInSeq      = 0;       // last accepted remote sequence
+
+    QTimer* m_netKeepAliveTimer = nullptr;    // pings peer every 5 s
+
+    // Internal helpers (called from I/O thread; signal back to main thread)
+    void startNetworkThread();
+    void stopNetworkThread();
+    void sendGameMessage(const QString& json);
+    void scheduleRead();
+    void onRawMessage(const std::string& raw);// called on I/O thread → Qt::QueuedConnection
 
 public:
     explicit Game(QObject* parent = nullptr);
@@ -69,10 +94,14 @@ public:
 
     void startNewGame(Difficulty diff);
 
-    // Multiplayer stubs
+    // Multiplayer
     void startMultiplayerMode();
     void hostMultiplayerSession(int port);
     void joinMultiplayerSession(const QString& host, int port);
+
+    // Returns which player index this instance owns locally (0 or 1).
+    // Used by GameWindow to send only the correct player's input.
+    int localPlayerIndex() const { return m_localPlayerIndex; }
 
     void startLevel(int levelIndex, Difficulty diff);
     void nextLevel();

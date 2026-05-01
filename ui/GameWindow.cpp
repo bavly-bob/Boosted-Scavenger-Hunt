@@ -966,6 +966,8 @@ void GameWindow::paintEvent(QPaintEvent *event)
         p.drawText(hintsRect, Qt::AlignLeft | Qt::AlignVCenter, controlsText);
         p.restore();
     }
+        p.restore();
+    }
 
     const Level*  level  = m_game->level();
     const Player* player1 = m_game->player(0);
@@ -974,10 +976,12 @@ void GameWindow::paintEvent(QPaintEvent *event)
     p.save();
     p.translate(0, hudHeight());
 
-    const int mapPixelW = level->getWidth()  * TILE_SIZE;
-    const int mapPixelH = level->getHeight() * TILE_SIZE;
+    // V3: snapshot dimensions once — prevents mid-frame drift if a resize fires
     const int viewPixelW = width();
     const int viewPixelH = height() - hudHeight();
+    const int mapPixelW = level->getWidth()  * TILE_SIZE;
+    const int mapPixelH = level->getHeight() * TILE_SIZE;
+
 
     qreal playerPxX = player1->getX() * TILE_SIZE + TILE_SIZE / 2.0;
     qreal playerPxY = player1->getY() * TILE_SIZE + TILE_SIZE / 2.0;
@@ -1274,6 +1278,78 @@ void GameWindow::paintEvent(QPaintEvent *event)
                 const QRect statusRect(panelRect.x() + 10, panelRect.y() + 5, panelRect.width() - 20, 18);
                 const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
                 p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
+
+    if (!m_fogPatchOverlay.isNull()) {
+        const int fogSize = TILE_SIZE * 2;
+        for (int fy = startY; fy <= endY; fy += 3) {
+            for (int fx = startX; fx <= endX; fx += 3) {
+                const quint32 h = tileHash(fx, fy, 211u);
+                if ((h % 100u) < 18u) {
+                    const int screenX = fx * TILE_SIZE - camX;
+                    const int screenY = fy * TILE_SIZE - camY;
+                    p.drawPixmap(QRect(screenX, screenY, fogSize, fogSize),
+                                 m_fogPatchOverlay,
+                                 QRect(0, 0, m_fogPatchOverlay.width(), m_fogPatchOverlay.height()));
+                }
+            }
+        }
+    }
+
+    if (!m_vignetteOverlay.isNull()) {
+        p.drawPixmap(QRect(0, 0, viewPixelW, viewPixelH),
+                     m_vignetteOverlay,
+                     QRect(0, 0, m_vignetteOverlay.width(), m_vignetteOverlay.height()));
+    }
+
+    p.restore();
+
+    // Draw hints/status as a final overlay so they always stay above gameplay.
+    if (!m_statusText.isEmpty()) {
+        float opacity = statusOpacity();
+        if (opacity > 0.0f) {
+            p.save();
+            p.setOpacity(opacity);
+            const int overlayY = hudHeight() + 8;
+            const int overlayH = 28;
+            const QRect panelRect(12, overlayY, width() - 24, overlayH);
+
+            if (m_statusIsAiHint) {
+                p.setBrush(QColor(24, 38, 56, 225));
+                p.setPen(QPen(QColor(120, 200, 255), 1));
+                p.drawRoundedRect(panelRect, 5, 5);
+
+                QFont labelFont = p.font();
+                labelFont.setBold(true);
+                labelFont.setPointSize(8);
+                p.setFont(labelFont);
+                p.setPen(QColor(170, 225, 255));
+                p.drawText(QRect(panelRect.x() + 8, panelRect.y() + 6, 84, 16),
+                           Qt::AlignLeft | Qt::AlignVCenter, "[*] AI Hint");
+
+                QString hintBody = m_statusText;
+                if (hintBody.startsWith("AI Hint:", Qt::CaseInsensitive)) {
+                    hintBody = hintBody.mid(QString("AI Hint:").size()).trimmed();
+                }
+                QFont bodyFont = p.font();
+                bodyFont.setBold(false);
+                p.setFont(bodyFont);
+                p.setPen(QColor(225, 235, 245));
+                const QRect hintTextRect(panelRect.x() + 96, panelRect.y() + 6, panelRect.width() - 104, 16);
+                const QString elidedHint = p.fontMetrics().elidedText(hintBody, Qt::ElideRight, hintTextRect.width());
+                p.drawText(hintTextRect, Qt::AlignLeft | Qt::AlignVCenter, elidedHint);
+            } else {
+                p.setBrush(QColor(34, 28, 22, 220));
+                p.setPen(QPen(QColor(210, 180, 120), 1));
+                p.drawRoundedRect(panelRect, 5, 5);
+
+                QFont statusFont = p.font();
+                statusFont.setItalic(true);
+                statusFont.setPointSize(9);
+                p.setFont(statusFont);
+                p.setPen(QColor(240, 215, 150));
+                const QRect statusRect(panelRect.x() + 10, panelRect.y() + 5, panelRect.width() - 20, 18);
+                const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
+                p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
             }
             p.restore();
         } else {
@@ -1304,6 +1380,21 @@ void GameWindow::keyPressEvent(QKeyEvent *event)
 {
     if (!event) return;
 
+    // V2: F11 toggles fullscreen without disturbing the game state
+    if (event->key() == Qt::Key_F11) {
+        if (isFullScreen()) {
+            showNormal();
+            if (m_preferredSize.isValid())
+                resize(m_preferredSize);
+            m_isFullscreen = false;
+        } else {
+            m_preferredSize = size();
+            showFullScreen();
+            m_isFullscreen = true;
+        }
+        return;
+    }
+
     if (InputHandler::isPauseKey(event->key())) {
         if (m_game->state() == GameState::PLAYING) {
             showPauseOverlay();
@@ -1321,26 +1412,17 @@ void GameWindow::keyPressEvent(QKeyEvent *event)
     }
 
     if (m_game->isMultiplayerMode()) {
-        Direction p1Dir = Direction::None;
-        Direction p2Dir = Direction::None;
+        // N4 fix: only route the local player's keys; peer input arrives via network
+        Direction dir = Direction::None;
         switch (event->key()) {
-        case Qt::Key_W: p1Dir = Direction::Up; break;
-        case Qt::Key_S: p1Dir = Direction::Down; break;
-        case Qt::Key_A: p1Dir = Direction::Left; break;
-        case Qt::Key_D: p1Dir = Direction::Right; break;
-        case Qt::Key_Up: p2Dir = Direction::Up; break;
-        case Qt::Key_Down: p2Dir = Direction::Down; break;
-        case Qt::Key_Left: p2Dir = Direction::Left; break;
-        case Qt::Key_Right: p2Dir = Direction::Right; break;
-        default:
-            break;
+        case Qt::Key_W: case Qt::Key_Up:    dir = Direction::Up;    break;
+        case Qt::Key_S: case Qt::Key_Down:  dir = Direction::Down;  break;
+        case Qt::Key_A: case Qt::Key_Left:  dir = Direction::Left;  break;
+        case Qt::Key_D: case Qt::Key_Right: dir = Direction::Right; break;
+        default: break;
         }
-        if (p1Dir != Direction::None) {
-            m_game->handleInputForPlayer(0, p1Dir);
-            return;
-        }
-        if (p2Dir != Direction::None) {
-            m_game->handleInputForPlayer(1, p2Dir);
+        if (dir != Direction::None) {
+            m_game->handleInputForPlayer(m_game->localPlayerIndex(), dir);
             return;
         }
     } else {
@@ -1362,6 +1444,7 @@ void GameWindow::mousePressEvent(QMouseEvent *event)
 void GameWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    // V5: keep overlays covering the full window even when already visible
     m_pauseOverlay->setGeometry(rect());
     m_gameOverOverlay->setGeometry(rect());
     layoutHudButtons();
@@ -1440,8 +1523,8 @@ void GameWindow::ensureLevelsConfigured()
 
 void GameWindow::resizeToCurrentLevel()
 {
-    setMinimumSize(800, 600);
-    resize(1280, 960);
+    // V1/V4: do NOT resize() the window here — it reset the window on every
+    // level change. Only re-anchor children that follow the window rect.
     layoutHudButtons();
     m_pauseOverlay->setGeometry(rect());
     m_gameOverOverlay->setGeometry(rect());

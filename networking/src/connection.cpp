@@ -1,4 +1,7 @@
 // connection implementation - handles reading and writing messages to a client
+// All async operations are dispatched through net_strand to ensure that
+// net_write_queue and net_disconnect_handler are never accessed concurrently
+// from multiple I/O threads (fixes data-race).
 
 #include "connection.hpp"
 #include <iostream>
@@ -13,9 +16,13 @@ namespace // anonymous namespace for internal constants without polluting the gl
     constexpr std::size_t MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10 MB
 }
 
-// Constructor
+// Constructor — initialise strand from the socket's executor so all async
+// operations on this connection share a single logical thread.
 Connection::Connection(tcp::socket socket)
-    : net_socket(std::move(socket)), net_writing(false) {} // sockets can't be copied safely so we move them 
+    : net_strand(socket.get_executor()),
+      net_socket(std::move(socket)),
+      net_writing(false)
+{}
 
 // Start reading loop
 void Connection::start() 
@@ -29,39 +36,31 @@ void Connection::send(const std::string& message)
 {
     if (!isOpen()) return;
 
-    uint32_t len_net = htonl(static_cast<uint32_t>(message.size())); // convert to network byte order to ensure work cross-platform
+    uint32_t len_net = htonl(static_cast<uint32_t>(message.size()));
 
-    Ptr<std::vector<char>> buffer = std::make_shared<std::vector<char>>(HEADER_SIZE + message.size());
+    auto buffer = std::make_shared<std::vector<char>>(HEADER_SIZE + message.size());
 
-
-    /* 
-    We use std::memcpy here intentionally for low-level binary operations.
-    Reasoning:
-        - This is a network protocol buffer ([header][body]), so we are working with raw bytes.
-        - std::memcpy is the most direct and reliable way to copy fixed-size binary data (like the 4-byte length header).
-        - It avoids unnecessary abstractions when dealing with byte-level memory.
-        - Using std::span/std::ranges would still require reinterpret_cast for the header,
-          so it would not actually improve safety, only add complexity.
-        - In async networking, keeping this simple and predictable is more important than stylistic consistency.
-    
-    Note:
-        - The buffer is owned by a shared_ptr to ensure it stays alive during async_write.
-        - This is a controlled and safe use of "C-style" memory operations in a performance-critical path.
+    /*
+    std::memcpy is used deliberately here for low-level binary framing.
+    The buffer is a [4-byte-length][body] frame; std::memcpy is the most
+    direct, safe, and predictable way to write fixed-size binary headers.
+    The buffer is owned by a shared_ptr so it survives the async_write.
     */
-    std::memcpy(buffer->data(), &len_net, HEADER_SIZE); // copy 4-byte length header
-    std::memcpy(buffer->data() + HEADER_SIZE, message.data(), message.size()); // copy message body
+    std::memcpy(buffer->data(), &len_net, HEADER_SIZE);
+    std::memcpy(buffer->data() + HEADER_SIZE, message.data(), message.size());
 
-    // Queue the message
-    net_write_queue.push_back(buffer);
-
-    // If already writing, do nothing
-    if (net_writing) return;
-
-    doWrite();
+    // Post the enqueue+write through the strand — guarantees the queue is
+    // never touched from two threads at once.
+    boost::asio::post(net_strand, [self = shared_from_this(), buffer]() {
+        self->net_write_queue.push_back(buffer);
+        if (!self->net_writing)
+            self->doWrite();
+    });
 }
 
 void Connection::doWrite() 
 {
+    // Called only from within the strand — no mutex needed.
     if (net_write_queue.empty()) 
     {
         net_writing = false;
@@ -69,68 +68,81 @@ void Connection::doWrite()
     }
 
     net_writing = true;
-
     auto buffer = net_write_queue.front();
 
     boost::asio::async_write(net_socket, boost::asio::buffer(*buffer),
-        [self = shared_from_this(), buffer](const boost::system::error_code& ec, std::size_t) {
-            if (!ec) 
+        boost::asio::bind_executor(net_strand,
+            [self = shared_from_this(), buffer]
+            (const boost::system::error_code& ec, std::size_t)
             {
-                self->net_write_queue.pop_front(); // remove the front element from the queue
-                self->doWrite(); // continue next write
-            } 
-            
-            else self->handleError(ec); // handle error
-        });
+                if (!ec) 
+                {
+                    self->net_write_queue.pop_front();
+                    self->doWrite();
+                } 
+                else
+                {
+                    self->handleError(ec);
+                }
+            }));
 }
 
 // ===================== READ =====================
 
-void Connection::readHeader() {
-    boost::asio::async_read(net_socket, boost::asio::buffer(net_header_buffer),
-        [self = shared_from_this()](const boost::system::error_code& ec, std::size_t) {
-            if (ec) {
-                self->handleError(ec);
-                return;
-            }
+void Connection::readHeader()
+{
+    boost::asio::async_read(net_socket,
+        boost::asio::buffer(net_header_buffer),
+        boost::asio::bind_executor(net_strand,
+            [self = shared_from_this()]
+            (const boost::system::error_code& ec, std::size_t)
+            {
+                if (ec) {
+                    self->handleError(ec);
+                    return;
+                }
 
-            uint32_t bodyLength = 0;
-            std::memcpy(&bodyLength, self->net_header_buffer.data(), HEADER_SIZE);
-            bodyLength = ntohl(bodyLength); // FIXED endianness
+                uint32_t bodyLength = 0;
+                std::memcpy(&bodyLength, self->net_header_buffer.data(), HEADER_SIZE);
+                bodyLength = ntohl(bodyLength);
 
-            // Validate size
-            if (bodyLength == 0) {
-                // Decide protocol behavior: ignore or treat as heartbeat
-                self->readHeader();
-                return;
-            }
+                if (bodyLength == 0) {
+                    // Zero-length frame: heartbeat / ignore
+                    self->readHeader();
+                    return;
+                }
+                if (bodyLength > MAX_MESSAGE_SIZE) {
+                    self->handleError(boost::asio::error::message_size);
+                    return;
+                }
 
-            if (bodyLength > MAX_MESSAGE_SIZE) {
-                self->handleError(boost::asio::error::message_size);
-                return;
-            }
-
-            self->readBody(bodyLength);
-        });
+                self->readBody(bodyLength);
+            }));
 }
 
-void Connection::readBody(std::size_t length) {
+void Connection::readBody(std::size_t length)
+{
     net_body_buffer.resize(length);
 
-    boost::asio::async_read(net_socket, boost::asio::buffer(net_body_buffer),
-        [self = shared_from_this()](const boost::system::error_code& ec, std::size_t) {
-            if (ec) {
-                self->handleError(ec);
-                return;
-            }
+    boost::asio::async_read(net_socket,
+        boost::asio::buffer(net_body_buffer),
+        boost::asio::bind_executor(net_strand,
+            [self = shared_from_this()]
+            (const boost::system::error_code& ec, std::size_t)
+            {
+                if (ec) {
+                    self->handleError(ec);
+                    return;
+                }
 
-            if (self->net_message_handler) {
-                std::string msg(self->net_body_buffer.data(), self->net_body_buffer.size());
-                self->net_message_handler(msg);
-            }
+                if (self->net_message_handler) {
+                    std::string msg(self->net_body_buffer.data(),
+                                    self->net_body_buffer.size());
+                    self->net_message_handler(msg);
+                }
 
-            self->readHeader(); // continue loop
-        });
+                self->readHeader(); // continue loop
+            }));
 }
 
 // ===================== HANDLERS =====================
@@ -156,7 +168,7 @@ bool Connection::isOpen() const
 
 void Connection::handleError(const boost::system::error_code& ec) 
 {
-    // Graceful shutdown
+    // Called from within the strand — safe to access all members.
     if (net_socket.is_open()) 
     {
         boost::system::error_code ignored;
@@ -164,16 +176,14 @@ void Connection::handleError(const boost::system::error_code& ec)
         net_socket.close(ignored);
     }
 
-    // Clear write queue
     net_write_queue.clear();
     net_writing = false;
 
-    // Call disconnect handler safely
     if (net_disconnect_handler) 
     {
         auto handler = std::move(net_disconnect_handler);
         net_disconnect_handler = nullptr;
-        handler();
+        handler(); // fire once, then null
     }
 }
 

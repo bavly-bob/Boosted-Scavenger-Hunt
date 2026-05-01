@@ -10,8 +10,10 @@
 #include "AIHelper.h"
 #include "InteractionResult.h"
 #include "protocol.hpp"
+#include "GameMessage.hpp"
 
 #include <boost/asio.hpp>
+#include <QMetaObject>
 
 #include <QTimer>
 #include <QFile>
@@ -27,58 +29,23 @@
 #include <chrono>
 #include <thread>
 
+// NetState PIMPL
+// Isolates all Boost.Asio types so only Game.cpp pulls in <boost/asio.hpp>.
+// io_context runs on ioThread; results are posted back via QMetaObject.
+struct Game::NetState {
+    boost::asio::io_context io;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type>
+        work{ io.get_executor() };
+    std::shared_ptr<boost::asio::ip::tcp::socket> socket;
+    std::thread ioThread;
+    std::array<char, 4> headerBuf{};
+    std::vector<char>   bodyBuf;
+};
+
 namespace {
 using boost::asio::ip::tcp;
 constexpr std::uint32_t kMaxFrameSize = 10u * 1024u * 1024u;
 
-bool readFramedJson(tcp::socket& socket, QJsonObject& out, QString& error)
-{
-    std::array<char, 4> header{};
-    boost::system::error_code ec;
-    boost::asio::read(socket, boost::asio::buffer(header), ec);
-    if (ec) {
-        error = QStringLiteral("Receive failed: %1").arg(QString::fromStdString(ec.message()));
-        return false;
-    }
-
-    const std::uint32_t length = netwatch::protocol::decodeHeader(header.data());
-    if (length == 0 || length > kMaxFrameSize) {
-        error = QStringLiteral("Invalid message size from peer.");
-        return false;
-    }
-
-    std::string payload(length, '\0');
-    boost::asio::read(socket, boost::asio::buffer(payload), ec);
-    if (ec) {
-        error = QStringLiteral("Receive failed: %1").arg(QString::fromStdString(ec.message()));
-        return false;
-    }
-
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(payload.data(), static_cast<int>(payload.size())), &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        error = QStringLiteral("Received invalid JSON payload.");
-        return false;
-    }
-
-    out = doc.object();
-    return true;
-}
-
-bool writeFramedJson(tcp::socket& socket, const QJsonObject& obj, QString& error)
-{
-    const std::string payload = QJsonDocument(obj).toJson(QJsonDocument::Compact).toStdString();
-    const std::string frame = netwatch::protocol::encode(payload);
-
-    boost::system::error_code ec;
-    boost::asio::write(socket, boost::asio::buffer(frame), ec);
-    if (ec) {
-        error = QStringLiteral("Send failed: %1").arg(QString::fromStdString(ec.message()));
-        return false;
-    }
-
-    return true;
-}
 
 QString findDifficultyConfigPath()
 {
@@ -157,7 +124,10 @@ Game::Game(QObject* parent)
     initSounds();
 }
 
-Game::~Game() = default;
+Game::~Game()
+{
+    stopNetworkThread();
+}
 
 void Game::initSounds()
 {
@@ -236,72 +206,74 @@ void Game::hostMultiplayerSession(int port)
         return;
     }
 
-    boost::asio::io_context io;
+    stopNetworkThread(); // clean up any previous session
+    m_localPlayerIndex = 0;
+    m_lastInSeq        = 0;
+    m_net = std::make_unique<NetState>();
+
+    // Build acceptor — errors here are fatal before any async work starts
     boost::system::error_code ec;
+    auto acceptor = std::make_shared<tcp::acceptor>(m_net->io);
+    acceptor->open(tcp::v4(), ec);
+    if (ec) { emit clueRevealed("Host open failed: " + QString::fromStdString(ec.message())); m_net.reset(); return; }
+    acceptor->set_option(boost::asio::socket_base::reuse_address(true));
+    acceptor->bind(tcp::endpoint(tcp::v4(), static_cast<unsigned short>(port)), ec);
+    if (ec) { emit clueRevealed("Host bind failed: " + QString::fromStdString(ec.message())); m_net.reset(); return; }
+    acceptor->listen(boost::asio::socket_base::max_listen_connections);
 
-    tcp::acceptor acceptor(io);
-    acceptor.open(tcp::v4(), ec);
-    if (ec) {
-        emit clueRevealed(QStringLiteral("Host failed: %1").arg(QString::fromStdString(ec.message())));
-        return;
-    }
-    acceptor.set_option(boost::asio::socket_base::reuse_address(true), ec);
-    if (ec) {
-        emit clueRevealed(QStringLiteral("Host failed: %1").arg(QString::fromStdString(ec.message())));
-        return;
-    }
-    acceptor.bind(tcp::endpoint(tcp::v4(), static_cast<unsigned short>(port)), ec);
-    if (ec) {
-        emit clueRevealed(QStringLiteral("Host failed on port %1: %2").arg(port).arg(QString::fromStdString(ec.message())));
-        return;
-    }
-    acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
-    if (ec) {
-        emit clueRevealed(QStringLiteral("Host failed: %1").arg(QString::fromStdString(ec.message())));
-        return;
-    }
+    emit clueRevealed(QStringLiteral("Hosting on port %1. Waiting for peer…").arg(port));
 
-    emit clueRevealed(QStringLiteral("Hosting on port %1. Waiting for peer...").arg(port));
+    // Accept ONE client asynchronously — io thread does the waiting
+    auto sockPtr = std::make_shared<tcp::socket>(m_net->io);
+    acceptor->async_accept(*sockPtr,
+        [this, acceptor, sockPtr](const boost::system::error_code& ec) {
+            acceptor->close();
+            if (ec) {
+                QMetaObject::invokeMethod(this, [this, m = ec.message()]() {
+                    emit clueRevealed("Accept failed: " + QString::fromStdString(m));
+                }, Qt::QueuedConnection);
+                return;
+            }
+            // Send StateSync (synchronous single write — on io thread, not main)
+            using namespace scavenger::net;
+            const auto stateMsg = makeStateSync(
+                ++m_outSeq, m_currentLevelIndex,
+                static_cast<int>(m_difficulty),
+                m_score, m_highScore,
+                static_cast<qint64>(m_runSeedBase),
+                m_runIndex, m_lootRoomsSpawned,
+                m_runTimeElapsed, m_levelTimeElapsed, m_timeRemaining);
+            const std::string frame = netwatch::protocol::encode(stateMsg.toJson().toStdString());
+            boost::system::error_code wec;
+            boost::asio::write(*sockPtr, boost::asio::buffer(frame), wec);
 
-    tcp::socket socket(io);
-    acceptor.accept(socket, ec);
-    if (ec) {
-        emit clueRevealed(QStringLiteral("Accept failed: %1").arg(QString::fromStdString(ec.message())));
-        return;
+            m_net->socket = sockPtr;
+
+            const std::string peerAddr = [&]() -> std::string {
+                boost::system::error_code ignored;
+                return sockPtr->remote_endpoint(ignored).address().to_string();
+            }();
+            QMetaObject::invokeMethod(this, [this, peerAddr]() {
+                emit clueRevealed("Peer joined from " + QString::fromStdString(peerAddr));
+            }, Qt::QueuedConnection);
+
+            scheduleRead(); // start persistent receive loop (fixes N2)
+        });
+
+    startNetworkThread(); // spin up io thread (fixes N1)
+
+    // Keep-alive ping every 5 s
+    if (!m_netKeepAliveTimer) {
+        m_netKeepAliveTimer = new QTimer(this);
+        m_netKeepAliveTimer->setInterval(5000);
+        connect(m_netKeepAliveTimer, &QTimer::timeout, this, [this]() {
+            using namespace scavenger::net;
+            sendGameMessage(makePing(++m_outSeq).toJson());
+        });
     }
-
-    QJsonObject joinRequest;
-    QString errorText;
-    if (!readFramedJson(socket, joinRequest, errorText)) {
-        emit clueRevealed(errorText);
-        return;
-    }
-
-    if (joinRequest.value("type").toString() != QStringLiteral("join")) {
-        emit clueRevealed("Peer sent invalid join request.");
-        return;
-    }
-
-    const QJsonObject state{
-        {QStringLiteral("levelIndex"), m_currentLevelIndex},
-        {QStringLiteral("difficulty"), static_cast<int>(m_difficulty)},
-        {QStringLiteral("score"), m_score},
-        {QStringLiteral("highScore"), m_highScore},
-        {QStringLiteral("seedBase"), static_cast<qint64>(m_runSeedBase)},
-        {QStringLiteral("runIndex"), m_runIndex},
-        {QStringLiteral("lootRoomsSpawned"), m_lootRoomsSpawned},
-        {QStringLiteral("runTimeSeconds"), m_runTimeElapsed},
-        {QStringLiteral("levelTimeSeconds"), m_levelTimeElapsed},
-        {QStringLiteral("timeRemaining"), m_timeRemaining}
-    };
-
-    if (!writeFramedJson(socket, state, errorText)) {
-        emit clueRevealed(errorText);
-        return;
-    }
-
-    emit clueRevealed(QStringLiteral("Peer joined from %1").arg(QString::fromStdString(socket.remote_endpoint().address().to_string())));
+    m_netKeepAliveTimer->start();
 }
+
 
 void Game::joinMultiplayerSession(const QString& host, int port)
 {
@@ -310,92 +282,253 @@ void Game::joinMultiplayerSession(const QString& host, int port)
         return;
     }
 
-    boost::asio::io_context io;
-    boost::system::error_code ec;
+    stopNetworkThread();
+    m_localPlayerIndex = 1; // joiner owns player 1
+    m_lastInSeq        = 0;
+    m_net = std::make_unique<NetState>();
 
-    tcp::resolver resolver(io);
-    const auto endpoints = resolver.resolve(host.trimmed().toStdString(), std::to_string(port), ec);
-    if (ec) {
-        emit clueRevealed(QStringLiteral("Resolve failed for %1:%2 (%3)").arg(host.trimmed()).arg(port).arg(QString::fromStdString(ec.message())));
-        return;
+    emit clueRevealed(QStringLiteral("Joining %1:%2…").arg(host.trimmed()).arg(port));
+
+    auto resolver = std::make_shared<tcp::resolver>(m_net->io);
+    const std::string hostStr = host.trimmed().toStdString();
+    const std::string portStr = std::to_string(port);
+
+    resolver->async_resolve(hostStr, portStr,
+        [this, resolver, hostStr, portStr](
+            const boost::system::error_code& ec,
+            tcp::resolver::results_type endpoints)
+        {
+            if (ec) {
+                QMetaObject::invokeMethod(this, [this, m = ec.message()]() {
+                    emit clueRevealed("Resolve failed: " + QString::fromStdString(m));
+                }, Qt::QueuedConnection);
+                return;
+            }
+
+            auto retries = std::make_shared<int>(0);
+            auto timer   = std::make_shared<boost::asio::steady_timer>(m_net->io);
+            auto sock    = std::make_shared<tcp::socket>(m_net->io);
+
+            // self-referential retry lambda — uses timer, no sleep_for (fixes N3)
+            auto tryConnect = std::make_shared<std::function<void()>>();
+            *tryConnect = [this, sock, endpoints, retries, timer, tryConnect]()
+            {
+                boost::system::error_code ignored;
+                sock->close(ignored);
+
+                boost::asio::async_connect(*sock, endpoints,
+                    [this, sock, retries, timer, tryConnect]
+                    (const boost::system::error_code& ec, const tcp::endpoint&)
+                    {
+                        if (!ec) {
+                            // Connected — send JoinRequest then read StateSync
+                            using namespace scavenger::net;
+                            GameMessage req;
+                            req.type = MsgType::JoinRequest;
+                            req.seq  = ++m_outSeq;
+                            req.payload[QStringLiteral("version")] = 1;
+                            const std::string frame =
+                                netwatch::protocol::encode(req.toJson().toStdString());
+                            boost::system::error_code wec;
+                            boost::asio::write(*sock, boost::asio::buffer(frame), wec);
+                            if (wec) return;
+
+                            // Read StateSync header + body (one-time init, on io thread)
+                            std::array<char,4> hdr{};
+                            boost::asio::read(*sock, boost::asio::buffer(hdr), wec);
+                            if (wec) return;
+                            const uint32_t len = netwatch::protocol::decodeHeader(hdr.data());
+                            if (len == 0 || len > kMaxFrameSize) return;
+                            std::string body(len, '\0');
+                            boost::asio::read(*sock, boost::asio::buffer(body), wec);
+                            if (wec) return;
+
+                            GameMessage stateMsg;
+                            if (!GameMessage::fromJson(QString::fromStdString(body), stateMsg)
+                                || stateMsg.type != MsgType::StateSync) {
+                                QMetaObject::invokeMethod(this, [this]() {
+                                    emit clueRevealed("Invalid state from host.");
+                                }, Qt::QueuedConnection);
+                                return;
+                            }
+
+                            m_net->socket = sock;
+                            const QJsonObject p = stateMsg.payload;
+
+                            // Apply state on main thread, then start read loop (fixes N2)
+                            QMetaObject::invokeMethod(this, [this, p]() {
+                                const int levelIndex = qMax(0, p.value("levelIndex").toInt(0));
+                                const int diffInt    = p.value("difficulty").toInt(1);
+                                Difficulty diff = Difficulty::NORMAL;
+                                if (diffInt == 0) diff = Difficulty::EASY;
+                                else if (diffInt == 2) diff = Difficulty::HARD;
+
+                                m_multiplayerMode = true;
+                                resetTreasureReachState();
+                                m_score            = p.value("score").toInt(0);
+                                m_highScore        = p.value("highScore").toInt(m_score);
+                                m_runSeedBase      = static_cast<quint32>(p.value("seedBase").toDouble(0.0));
+                                m_runIndex         = qMax(1, p.value("runIndex").toInt(1));
+                                m_lootRoomsSpawned = qMax(0, p.value("lootRoomsSpawned").toInt(0));
+                                if (m_runSeedBase == 0u)
+                                    m_runSeedBase = QRandomGenerator::global()->generate();
+
+                                const DifficultyProfile profile =
+                                    m_difficultyConfig.selectProfile(diff, m_runSeedBase, m_runIndex);
+                                m_activeDifficultyProfileId = profile.id;
+                                m_activeGenerationRules     = profile.rules;
+                                m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
+
+                                startLevel(levelIndex, diff);
+                                m_runTimeElapsed   = qMax(0, p.value("runTimeSeconds").toInt(0));
+                                m_levelTimeElapsed = qMax(0, p.value("levelTimeSeconds").toInt(0));
+                                m_timeRemaining    = qMax(0, p.value("timeRemaining").toInt(m_timeRemaining));
+
+                                emit clueRevealed("Connected to host. You are Player 2.");
+                                emit timerTick(m_timeRemaining);
+                                emit gameUpdated();
+                            }, Qt::QueuedConnection);
+
+                            scheduleRead(); // persistent receive loop
+                            return;
+                        }
+
+                        if (++(*retries) >= 60) {
+                            QMetaObject::invokeMethod(this, [this, m = ec.message()]() {
+                                emit clueRevealed("Failed to connect: " + QString::fromStdString(m));
+                            }, Qt::QueuedConnection);
+                            return;
+                        }
+                        // Retry after 500 ms without blocking the io thread
+                        timer->expires_after(std::chrono::milliseconds(500));
+                        timer->async_wait([tryConnect](const boost::system::error_code& tec) {
+                            if (!tec) (*tryConnect)();
+                        });
+                    });
+            };
+            (*tryConnect)();
+        });
+
+    startNetworkThread();
+
+    if (!m_netKeepAliveTimer) {
+        m_netKeepAliveTimer = new QTimer(this);
+        m_netKeepAliveTimer->setInterval(5000);
+        connect(m_netKeepAliveTimer, &QTimer::timeout, this, [this]() {
+            using namespace scavenger::net;
+            sendGameMessage(makePing(++m_outSeq).toJson());
+        });
     }
-
-    emit clueRevealed(QStringLiteral("Joining %1 on room port %2. Waiting for host...").arg(host.trimmed()).arg(port));
-
-    tcp::socket socket(io);
-    bool connected = false;
-    boost::system::error_code lastConnectError;
-    for (int attempt = 0; attempt < 60; ++attempt) {
-        socket.close();
-        socket = tcp::socket(io);
-        boost::asio::connect(socket, endpoints, ec);
-        if (!ec) {
-            connected = true;
-            break;
-        }
-        lastConnectError = ec;
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
-    if (!connected) {
-        emit clueRevealed(QStringLiteral("Failed to connect to %1:%2 (%3)")
-                              .arg(host.trimmed())
-                              .arg(port)
-                              .arg(QString::fromStdString(lastConnectError.message())));
-        return;
-    }
-
-    const QJsonObject joinRequest{
-        {QStringLiteral("type"), QStringLiteral("join")},
-        {QStringLiteral("version"), 1}
-    };
-
-    QString errorText;
-    if (!writeFramedJson(socket, joinRequest, errorText)) {
-        emit clueRevealed(errorText);
-        return;
-    }
-
-    QJsonObject root;
-    if (!readFramedJson(socket, root, errorText)) {
-        emit clueRevealed(errorText);
-        return;
-    }
-
-    const int levelIndex = qMax(0, root.value("levelIndex").toInt(0));
-    const int diffInt = root.value("difficulty").toInt(static_cast<int>(Difficulty::HARD));
-
-    Difficulty diff = Difficulty::NORMAL;
-    if (diffInt == 0) {
-        diff = Difficulty::EASY;
-    } else if (diffInt == 2) {
-        diff = Difficulty::HARD;
-    }
-
-    m_multiplayerMode = true;
-    resetTreasureReachState();
-    m_score = root.value("score").toInt(0);
-    m_highScore = root.value("highScore").toInt(m_score);
-    m_runSeedBase = static_cast<quint32>(root.value("seedBase").toDouble(0.0));
-    m_runIndex = qMax(1, root.value("runIndex").toInt(1));
-    m_lootRoomsSpawned = qMax(0, root.value("lootRoomsSpawned").toInt(0));
-    if (m_runSeedBase == 0u) {
-        m_runSeedBase = QRandomGenerator::global()->generate();
-    }
-
-    const DifficultyProfile profile = m_difficultyConfig.selectProfile(diff, m_runSeedBase, m_runIndex);
-    m_activeDifficultyProfileId = profile.id;
-    m_activeGenerationRules = profile.rules;
-    m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
-
-    startLevel(levelIndex, diff);
-    m_runTimeElapsed = qMax(0, root.value("runTimeSeconds").toInt(0));
-    m_levelTimeElapsed = qMax(0, root.value("levelTimeSeconds").toInt(0));
-    m_timeRemaining = qMax(0, root.value("timeRemaining").toInt(m_timeRemaining));
-
-    emit clueRevealed(QStringLiteral("Connected to host %1:%2").arg(host.trimmed()).arg(port));
-    emit timerTick(m_timeRemaining);
-    emit gameUpdated();
+    m_netKeepAliveTimer->start();
 }
+
+// ── Async networking helpers ───────────────────────────────────────────────
+
+void Game::startNetworkThread()
+{
+    if (!m_net) return;
+    m_net->ioThread = std::thread([this]() { m_net->io.run(); });
+}
+
+void Game::stopNetworkThread()
+{
+    if (!m_net) return;
+    if (m_net->socket && m_net->socket->is_open()) {
+        boost::system::error_code ec;
+        m_net->socket->shutdown(tcp::socket::shutdown_both, ec);
+        m_net->socket->close(ec);
+    }
+    m_net->work.reset(); // let io.run() exit
+    if (m_net->ioThread.joinable())
+        m_net->ioThread.join();
+    m_net.reset();
+    if (m_netKeepAliveTimer)
+        m_netKeepAliveTimer->stop();
+}
+
+void Game::sendGameMessage(const QString& json)
+{
+    if (!m_net || !m_net->socket || !m_net->socket->is_open()) return;
+    const std::string frame = netwatch::protocol::encode(json.toStdString());
+    auto buf  = std::make_shared<std::string>(frame);
+    auto sock = m_net->socket;
+    boost::asio::post(m_net->io, [sock, buf]() {
+        boost::asio::async_write(*sock, boost::asio::buffer(*buf),
+            [buf](const boost::system::error_code&, std::size_t){});
+    });
+}
+
+void Game::scheduleRead()
+{
+    if (!m_net || !m_net->socket) return;
+    boost::asio::async_read(*m_net->socket,
+        boost::asio::buffer(m_net->headerBuf),
+        [this](const boost::system::error_code& ec, std::size_t)
+        {
+            if (ec) {
+                QMetaObject::invokeMethod(this, [this]() {
+                    emit clueRevealed("Peer disconnected.");
+                }, Qt::QueuedConnection);
+                return;
+            }
+            const uint32_t len = netwatch::protocol::decodeHeader(m_net->headerBuf.data());
+            if (len == 0 || len > kMaxFrameSize) { scheduleRead(); return; }
+
+            m_net->bodyBuf.resize(len);
+            boost::asio::async_read(*m_net->socket,
+                boost::asio::buffer(m_net->bodyBuf),
+                [this](const boost::system::error_code& ec2, std::size_t)
+                {
+                    if (ec2) {
+                        QMetaObject::invokeMethod(this, [this]() {
+                            emit clueRevealed("Peer disconnected.");
+                        }, Qt::QueuedConnection);
+                        return;
+                    }
+                    std::string raw(m_net->bodyBuf.data(), m_net->bodyBuf.size());
+                    onRawMessage(raw);
+                    scheduleRead(); // loop
+                });
+        });
+}
+
+void Game::onRawMessage(const std::string& raw)
+{
+    using namespace scavenger::net;
+    GameMessage msg;
+    if (!GameMessage::fromJson(QString::fromStdString(raw), msg)) return;
+
+    // Sequence dedup — drop duplicate or out-of-order (N5)
+    if (msg.type != MsgType::Ping && msg.type != MsgType::Pong) {
+        if (msg.seq != 0 && msg.seq <= m_lastInSeq) return;
+        m_lastInSeq = msg.seq;
+    }
+
+    switch (msg.type) {
+    case MsgType::Ping:
+        sendGameMessage(makePong(msg.seq).toJson());
+        break;
+    case MsgType::Pong:
+        break; // confirms peer is alive; could update last-seen timestamp
+    case MsgType::Move: {
+        const int pi  = msg.payload.value(QStringLiteral("pi")).toInt(-1);
+        const int dir = msg.payload.value(QStringLiteral("dir")).toInt(0);
+        if (pi < 0 || pi > 1) break;
+        const Direction d = static_cast<Direction>(dir);
+        // Dispatch to main thread — handleInputForPlayer is NOT thread-safe
+        QMetaObject::invokeMethod(this, [this, pi, d]() {
+            handleInputForPlayer(pi, d);
+        }, Qt::QueuedConnection);
+        break;
+    }
+    case MsgType::StateSync:
+        break; // already handled inline during handshake
+    default:
+        break;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 void Game::startLevel(int levelIndex, Difficulty diff)
 {
@@ -643,6 +776,12 @@ void Game::handleInputForPlayer(int playerIndex, Direction dir)
 
     activePlayer->move(dir, *m_currentLevel);
     const QPoint newPos(activePlayer->getX(), activePlayer->getY());
+
+    // N4: transmit the validated move to the peer so their client applies it
+    if (m_multiplayerMode && playerIndex == m_localPlayerIndex && newPos != currentPos) {
+        using namespace scavenger::net;
+        sendGameMessage(makeMove(++m_outSeq, playerIndex, static_cast<int>(dir)).toJson());
+    }
 
     if (newPos == currentPos) {
         return;

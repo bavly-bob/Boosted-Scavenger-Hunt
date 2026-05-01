@@ -83,6 +83,8 @@ private:
     bool     m_levelsConfigured;
     bool     m_assetsLoaded;
     bool     m_statusIsAiHint;
+    bool     m_isFullscreen = false;
+    QSize    m_preferredSize;
 
     QPushButton* m_hudRestartBtn;
     QPushButton* m_hudQuitBtn;
