@@ -16,10 +16,10 @@ namespace // anonymous namespace for internal constants without polluting the gl
     constexpr std::size_t MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10 MB
 }
 
-// Constructor — initialise strand from the socket's executor so all async
-// operations on this connection share a single logical thread.
+// Constructor — strand is built from the socket's executor via make_strand so
+// the type (any_io_executor) matches regardless of Boost version.
 Connection::Connection(tcp::socket socket)
-    : net_strand(socket.get_executor()),
+    : net_strand(boost::asio::make_strand(socket.get_executor())),
       net_socket(std::move(socket)),
       net_writing(false)
 {}

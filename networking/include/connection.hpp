@@ -28,8 +28,9 @@ private: // internal async handlers
     void handleError(const boost::system::error_code& ec);
 
 private: // member variables
-    // Strand serialises all async callbacks — no mutex needed for the queue
-    boost::asio::strand<boost::asio::io_context::executor_type> net_strand;
+    // Strand serialises all async callbacks — no mutex needed for the queue.
+    // Uses any_io_executor to match tcp::socket's default executor in Boost 1.89+
+    boost::asio::strand<boost::asio::any_io_executor> net_strand;
     tcp::socket net_socket;
     std::array<char, 4> net_header_buffer;
     std::vector<char> net_body_buffer;

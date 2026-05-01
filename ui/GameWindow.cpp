@@ -966,8 +966,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
         p.drawText(hintsRect, Qt::AlignLeft | Qt::AlignVCenter, controlsText);
         p.restore();
     }
-        p.restore();
-    }
 
     const Level*  level  = m_game->level();
     const Player* player1 = m_game->player(0);
@@ -1278,78 +1276,6 @@ void GameWindow::paintEvent(QPaintEvent *event)
                 const QRect statusRect(panelRect.x() + 10, panelRect.y() + 5, panelRect.width() - 20, 18);
                 const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
                 p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
-
-    if (!m_fogPatchOverlay.isNull()) {
-        const int fogSize = TILE_SIZE * 2;
-        for (int fy = startY; fy <= endY; fy += 3) {
-            for (int fx = startX; fx <= endX; fx += 3) {
-                const quint32 h = tileHash(fx, fy, 211u);
-                if ((h % 100u) < 18u) {
-                    const int screenX = fx * TILE_SIZE - camX;
-                    const int screenY = fy * TILE_SIZE - camY;
-                    p.drawPixmap(QRect(screenX, screenY, fogSize, fogSize),
-                                 m_fogPatchOverlay,
-                                 QRect(0, 0, m_fogPatchOverlay.width(), m_fogPatchOverlay.height()));
-                }
-            }
-        }
-    }
-
-    if (!m_vignetteOverlay.isNull()) {
-        p.drawPixmap(QRect(0, 0, viewPixelW, viewPixelH),
-                     m_vignetteOverlay,
-                     QRect(0, 0, m_vignetteOverlay.width(), m_vignetteOverlay.height()));
-    }
-
-    p.restore();
-
-    // Draw hints/status as a final overlay so they always stay above gameplay.
-    if (!m_statusText.isEmpty()) {
-        float opacity = statusOpacity();
-        if (opacity > 0.0f) {
-            p.save();
-            p.setOpacity(opacity);
-            const int overlayY = hudHeight() + 8;
-            const int overlayH = 28;
-            const QRect panelRect(12, overlayY, width() - 24, overlayH);
-
-            if (m_statusIsAiHint) {
-                p.setBrush(QColor(24, 38, 56, 225));
-                p.setPen(QPen(QColor(120, 200, 255), 1));
-                p.drawRoundedRect(panelRect, 5, 5);
-
-                QFont labelFont = p.font();
-                labelFont.setBold(true);
-                labelFont.setPointSize(8);
-                p.setFont(labelFont);
-                p.setPen(QColor(170, 225, 255));
-                p.drawText(QRect(panelRect.x() + 8, panelRect.y() + 6, 84, 16),
-                           Qt::AlignLeft | Qt::AlignVCenter, "[*] AI Hint");
-
-                QString hintBody = m_statusText;
-                if (hintBody.startsWith("AI Hint:", Qt::CaseInsensitive)) {
-                    hintBody = hintBody.mid(QString("AI Hint:").size()).trimmed();
-                }
-                QFont bodyFont = p.font();
-                bodyFont.setBold(false);
-                p.setFont(bodyFont);
-                p.setPen(QColor(225, 235, 245));
-                const QRect hintTextRect(panelRect.x() + 96, panelRect.y() + 6, panelRect.width() - 104, 16);
-                const QString elidedHint = p.fontMetrics().elidedText(hintBody, Qt::ElideRight, hintTextRect.width());
-                p.drawText(hintTextRect, Qt::AlignLeft | Qt::AlignVCenter, elidedHint);
-            } else {
-                p.setBrush(QColor(34, 28, 22, 220));
-                p.setPen(QPen(QColor(210, 180, 120), 1));
-                p.drawRoundedRect(panelRect, 5, 5);
-
-                QFont statusFont = p.font();
-                statusFont.setItalic(true);
-                statusFont.setPointSize(9);
-                p.setFont(statusFont);
-                p.setPen(QColor(240, 215, 150));
-                const QRect statusRect(panelRect.x() + 10, panelRect.y() + 5, panelRect.width() - 20, 18);
-                const QString elidedStatus = p.fontMetrics().elidedText(m_statusText, Qt::ElideRight, statusRect.width());
-                p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter, elidedStatus);
             }
             p.restore();
         } else {
@@ -1358,6 +1284,7 @@ void GameWindow::paintEvent(QPaintEvent *event)
     }
 
     drawMiniMap(p);
+
 
     // Critical state flashes
     if (m_game->timeRemaining() <= 10) {
