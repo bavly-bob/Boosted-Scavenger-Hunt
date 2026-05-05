@@ -138,10 +138,10 @@ MainMenu::MainMenu(QWidget *parent)
         m_stackedWidget->setCurrentIndex(0);
     });
     connect(hostBtn, &QPushButton::clicked, this, [this]{
-        emit multiplayerRequested();
+        emit multiplayerRequested(true);
     });
     connect(joinBtn, &QPushButton::clicked, this, [this]{
-        emit multiplayerRequested();
+        emit multiplayerRequested(false);
     });
 
     mpLayout->addSpacerItem(new QSpacerItem(0, 25, QSizePolicy::Minimum, QSizePolicy::Expanding));

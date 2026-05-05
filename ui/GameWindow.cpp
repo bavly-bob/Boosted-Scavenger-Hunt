@@ -643,7 +643,7 @@ void GameWindow::startNewGame(Difficulty difficulty)
     setFocus();
 }
 
-void GameWindow::startMultiplayerGame()
+void GameWindow::startMultiplayerGame(bool hostMode)
 {
     loadAssets();
     ensureLevelsConfigured();
@@ -652,71 +652,18 @@ void GameWindow::startMultiplayerGame()
     m_pauseOverlay->hide();
     m_gameOverOverlay->hide();
 
-    const QStringList modeChoices = {
-        QStringLiteral("Host Room"),
-        QStringLiteral("Join Room")
-    };
-    bool modeOk = false;
-    const QString mode = QInputDialog::getItem(this,
-                                               QStringLiteral("Multiplayer Mode"),
-                                               QStringLiteral("Choose mode:"),
-                                               modeChoices,
-                                               0,
-                                               false,
-                                               &modeOk);
-    if (!modeOk) {
-        emit quitToMainMenuRequested();
-        return;
-    }
-
-    struct RoomOption {
-        QString label;
-        int port;
-    };
-    const QVector<RoomOption> rooms = {
-        {QStringLiteral("Room 1 (Port 47001)"), 47001},
-        {QStringLiteral("Room 2 (Port 47002)"), 47002},
-        {QStringLiteral("Room 3 (Port 47003)"), 47003},
-        {QStringLiteral("Room 4 (Port 47004)"), 47004}
-    };
-    QStringList roomLabels;
-    roomLabels.reserve(rooms.size());
-    for (const RoomOption& room : rooms) {
-        roomLabels.push_back(room.label);
-    }
-    bool roomOk = false;
-    const QString selectedRoom = QInputDialog::getItem(this,
-                                                        QStringLiteral("Choose Room"),
-                                                        QStringLiteral("Select room:"),
-                                                        roomLabels,
-                                                        0,
-                                                        false,
-                                                        &roomOk);
-    if (!roomOk) {
-        emit quitToMainMenuRequested();
-        return;
-    }
-
-    int selectedPort = rooms.front().port;
-    for (const RoomOption& room : rooms) {
-        if (room.label == selectedRoom) {
-            selectedPort = room.port;
-            break;
-        }
-    }
-
     show();
     setFocus();
 
-    if (mode == QStringLiteral("Host Room")) {
-        m_game->hostMultiplayerSession(selectedPort);
+    if (hostMode) {
+        m_game->hostMultiplayerSession(0);
         return;
     }
 
     bool hostOk = false;
     const QString host = QInputDialog::getText(this,
                                                QStringLiteral("Join Host"),
-                                               QStringLiteral("Enter host/IP to join room:"),
+                                               QStringLiteral("Enter host/IP to join (LAN IP, not localhost):"),
                                                QLineEdit::Normal,
                                                QStringLiteral("127.0.0.1"),
                                                &hostOk);
@@ -724,7 +671,7 @@ void GameWindow::startMultiplayerGame()
         emit quitToMainMenuRequested();
         return;
     }
-    m_game->joinMultiplayerSession(host.trimmed(), selectedPort);
+    m_game->joinMultiplayerSession(host.trimmed(), 0);
 }
 
 bool GameWindow::loadSavedGame(const QString& filepath)

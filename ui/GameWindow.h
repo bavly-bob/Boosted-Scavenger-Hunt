@@ -23,7 +23,7 @@ public:
     explicit GameWindow(QWidget *parent = nullptr);
 
     void startNewGame(Difficulty difficulty);
-    void startMultiplayerGame();
+    void startMultiplayerGame(bool hostMode);
     bool loadSavedGame(const QString& filepath);
 
 signals:

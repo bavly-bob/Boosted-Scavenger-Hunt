@@ -28,6 +28,7 @@
 
 #include <chrono>
 #include <thread>
+#include <vector>
 
 // NetState PIMPL
 // Isolates all Boost.Asio types so only Game.cpp pulls in <boost/asio.hpp>.
@@ -45,6 +46,9 @@ struct Game::NetState {
 namespace {
 using boost::asio::ip::tcp;
 constexpr std::uint32_t kMaxFrameSize = 10u * 1024u * 1024u;
+constexpr unsigned short kRoomPortStart = 47001;
+constexpr unsigned short kRoomPortEnd   = 47004;
+constexpr int kJoinMaxAttempts = 120;
 
 
 QString findDifficultyConfigPath()
@@ -217,30 +221,80 @@ void Game::startMultiplayerMode()
 
 void Game::hostMultiplayerSession(int port)
 {
-    if (port <= 0 || port > 65535) {
+    if (port < 0 || port > 65535) {
         emit clueRevealed("Invalid port.");
         return;
     }
 
     prepareMultiplayerRun();
-    stopNetworkThread(); // clean up any previous session
+    stopNetworkThread();
     m_localPlayerIndex = 0;
     m_lastInSeq        = 0;
     m_net = std::make_unique<NetState>();
 
-    // Build acceptor — errors here are fatal before any async work starts
-    boost::system::error_code ec;
     auto acceptor = std::make_shared<tcp::acceptor>(m_net->io);
-    acceptor->open(tcp::v4(), ec);
-    if (ec) { emit clueRevealed("Host open failed: " + QString::fromStdString(ec.message())); m_net.reset(); return; }
-    acceptor->set_option(boost::asio::socket_base::reuse_address(true));
-    acceptor->bind(tcp::endpoint(tcp::v4(), static_cast<unsigned short>(port)), ec);
-    if (ec) { emit clueRevealed("Host bind failed: " + QString::fromStdString(ec.message())); m_net.reset(); return; }
-    acceptor->listen(boost::asio::socket_base::max_listen_connections);
+    boost::system::error_code openEc;
+    acceptor->open(tcp::v4(), openEc);
+    if (openEc) {
+        emit clueRevealed("Host open failed: " + QString::fromStdString(openEc.message()));
+        m_net.reset();
+        return;
+    }
 
-    emit clueRevealed(QStringLiteral("Hosting on port %1. Waiting for peer…").arg(port));
+    boost::system::error_code optionEc;
+    acceptor->set_option(boost::asio::socket_base::reuse_address(true), optionEc);
+    if (optionEc) {
+        emit clueRevealed("Host socket option failed: " + QString::fromStdString(optionEc.message()));
+        m_net.reset();
+        return;
+    }
 
-    // Accept ONE client asynchronously — io thread does the waiting
+    unsigned short selectedPort = 0;
+    boost::system::error_code bindEc;
+    boost::system::error_code listenEc;
+    auto tryBindPort = [&](unsigned short candidatePort) -> bool {
+        bindEc.clear();
+        listenEc.clear();
+        acceptor->bind(tcp::endpoint(tcp::v4(), candidatePort), bindEc);
+        if (bindEc) {
+            return false;
+        }
+        acceptor->listen(boost::asio::socket_base::max_listen_connections, listenEc);
+        if (listenEc) {
+            return false;
+        }
+        selectedPort = candidatePort;
+        return true;
+    };
+
+    if (port == 0) {
+        for (unsigned short candidate = kRoomPortStart; candidate <= kRoomPortEnd; ++candidate) {
+            if (tryBindPort(candidate)) {
+                break;
+            }
+        }
+        if (selectedPort == 0) {
+            const QString reason = bindEc ? QString::fromStdString(bindEc.message())
+                                          : QString::fromStdString(listenEc.message());
+            emit clueRevealed("No available host port in range 47001-47004. Last error: " + reason);
+            m_net.reset();
+            return;
+        }
+    } else {
+        const unsigned short requestedPort = static_cast<unsigned short>(port);
+        if (!tryBindPort(requestedPort)) {
+            const QString reason = bindEc ? QString::fromStdString(bindEc.message())
+                                          : QString::fromStdString(listenEc.message());
+            emit clueRevealed(QStringLiteral("Host bind failed on port %1: %2")
+                                  .arg(requestedPort)
+                                  .arg(reason));
+            m_net.reset();
+            return;
+        }
+    }
+
+    emit clueRevealed(QStringLiteral("Hosting on port %1. Waiting for peer...").arg(selectedPort));
+
     auto sockPtr = std::make_shared<tcp::socket>(m_net->io);
     acceptor->async_accept(*sockPtr,
         [this, acceptor, sockPtr](const boost::system::error_code& ec) {
@@ -251,156 +305,241 @@ void Game::hostMultiplayerSession(int port)
                 }, Qt::QueuedConnection);
                 return;
             }
-            // Send StateSync (synchronous single write — on io thread, not main)
+
+            using namespace scavenger::net;
+            std::array<char, 4> header{};
+            boost::system::error_code readEc;
+            boost::asio::read(*sockPtr, boost::asio::buffer(header), readEc);
+            if (readEc) {
+                QMetaObject::invokeMethod(this, [this, m = readEc.message()]() {
+                    emit clueRevealed("Join handshake read failed: " + QString::fromStdString(m));
+                }, Qt::QueuedConnection);
+                return;
+            }
+
+            const uint32_t len = netwatch::protocol::decodeHeader(header.data());
+            if (len == 0 || len > kMaxFrameSize) {
+                QMetaObject::invokeMethod(this, [this]() {
+                    emit clueRevealed("Join handshake failed: invalid frame length.");
+                }, Qt::QueuedConnection);
+                return;
+            }
+
+            std::string body(len, '\0');
+            boost::asio::read(*sockPtr, boost::asio::buffer(body), readEc);
+            if (readEc) {
+                QMetaObject::invokeMethod(this, [this, m = readEc.message()]() {
+                    emit clueRevealed("Join handshake body read failed: " + QString::fromStdString(m));
+                }, Qt::QueuedConnection);
+                return;
+            }
+
+            GameMessage joinMsg;
+            if (!GameMessage::fromJson(QString::fromStdString(body), joinMsg)
+                || joinMsg.type != MsgType::JoinRequest) {
+                QMetaObject::invokeMethod(this, [this]() {
+                    emit clueRevealed("Join handshake failed: expected JoinRequest.");
+                }, Qt::QueuedConnection);
+                return;
+            }
+
             m_net->socket = sockPtr;
 
             const std::string peerAddr = [&]() -> std::string {
                 boost::system::error_code ignored;
                 return sockPtr->remote_endpoint(ignored).address().to_string();
             }();
+
             QMetaObject::invokeMethod(this, [this, peerAddr]() {
                 emit clueRevealed("Peer joined from " + QString::fromStdString(peerAddr) + ". Starting shared run.");
                 startLevel(0, Difficulty::HARD);
                 emit clueRevealed("Multiplayer co-op: shared coins, shared deaths, synchronized level progression.");
+                if (!m_netKeepAliveTimer) {
+                    m_netKeepAliveTimer = new QTimer(this);
+                    m_netKeepAliveTimer->setInterval(5000);
+                    connect(m_netKeepAliveTimer, &QTimer::timeout, this, [this]() {
+                        using namespace scavenger::net;
+                        sendGameMessage(makePing(++m_outSeq).toJson());
+                    });
+                }
+                m_netKeepAliveTimer->start();
             }, Qt::QueuedConnection);
 
-            scheduleRead(); // start persistent receive loop (fixes N2)
+            scheduleRead();
         });
 
-    startNetworkThread(); // spin up io thread (fixes N1)
-
-    // Keep-alive ping every 5 s
-    if (!m_netKeepAliveTimer) {
-        m_netKeepAliveTimer = new QTimer(this);
-        m_netKeepAliveTimer->setInterval(5000);
-        connect(m_netKeepAliveTimer, &QTimer::timeout, this, [this]() {
-            using namespace scavenger::net;
-            sendGameMessage(makePing(++m_outSeq).toJson());
-        });
-    }
-    m_netKeepAliveTimer->start();
+    startNetworkThread();
 }
-
 
 void Game::joinMultiplayerSession(const QString& host, int port)
 {
-    if (host.trimmed().isEmpty() || port <= 0 || port > 65535) {
+    if (host.trimmed().isEmpty() || port < 0 || port > 65535) {
         emit clueRevealed("Invalid host or port.");
         return;
     }
 
     stopNetworkThread();
-    m_localPlayerIndex = 1; // joiner owns player 1
+    m_localPlayerIndex = 1;
     m_lastInSeq        = 0;
     m_net = std::make_unique<NetState>();
 
-    emit clueRevealed(QStringLiteral("Joining %1:%2…").arg(host.trimmed()).arg(port));
+    std::vector<unsigned short> candidatePorts;
+    if (port == 0) {
+        for (unsigned short candidate = kRoomPortStart; candidate <= kRoomPortEnd; ++candidate) {
+            candidatePorts.push_back(candidate);
+        }
+    } else {
+        candidatePorts.push_back(static_cast<unsigned short>(port));
+    }
 
-    auto resolver = std::make_shared<tcp::resolver>(m_net->io);
+    if (candidatePorts.empty()) {
+        emit clueRevealed("No candidate ports to scan.");
+        m_net.reset();
+        return;
+    }
+
+    if (port == 0) {
+        emit clueRevealed(QStringLiteral("Joining %1. Scanning ports 47001-47004...").arg(host.trimmed()));
+    } else {
+        emit clueRevealed(QStringLiteral("Joining %1:%2...").arg(host.trimmed()).arg(port));
+    }
+
     const std::string hostStr = host.trimmed().toStdString();
-    const std::string portStr = std::to_string(port);
+    auto ports = std::make_shared<std::vector<unsigned short>>(std::move(candidatePorts));
+    auto candidateIndex = std::make_shared<std::size_t>(0);
+    auto attempts = std::make_shared<int>(0);
+    auto timer = std::make_shared<boost::asio::steady_timer>(m_net->io);
+    auto tryConnect = std::make_shared<std::function<void()>>();
 
-    resolver->async_resolve(hostStr, portStr,
-        [this, resolver, hostStr, portStr](
-            const boost::system::error_code& ec,
-            tcp::resolver::results_type endpoints)
-        {
-            if (ec) {
-                QMetaObject::invokeMethod(this, [this, m = ec.message()]() {
-                    emit clueRevealed("Resolve failed: " + QString::fromStdString(m));
+    *tryConnect = [this, hostStr, ports, candidateIndex, attempts, timer, tryConnect]() {
+        if (!m_net || ports->empty()) {
+            return;
+        }
+
+        if (++(*attempts) > kJoinMaxAttempts) {
+            QMetaObject::invokeMethod(this, [this]() {
+                emit clueRevealed("Failed to find host in scanned ports.");
+            }, Qt::QueuedConnection);
+            return;
+        }
+
+        const unsigned short targetPort = ports->at(*candidateIndex);
+        *candidateIndex = (*candidateIndex + 1) % ports->size();
+
+        auto scheduleRetry = [this, attempts, timer, tryConnect]() {
+            if (*attempts > kJoinMaxAttempts) {
+                QMetaObject::invokeMethod(this, [this]() {
+                    emit clueRevealed("Failed to find host in scanned ports.");
                 }, Qt::QueuedConnection);
                 return;
             }
 
-            auto retries = std::make_shared<int>(0);
-            auto timer   = std::make_shared<boost::asio::steady_timer>(m_net->io);
-            auto sock    = std::make_shared<tcp::socket>(m_net->io);
+            timer->expires_after(std::chrono::milliseconds(500));
+            timer->async_wait([tryConnect](const boost::system::error_code& tec) {
+                if (!tec) {
+                    (*tryConnect)();
+                }
+            });
+        };
 
-            // self-referential retry lambda — uses timer, no sleep_for (fixes N3)
-            auto tryConnect = std::make_shared<std::function<void()>>();
-            *tryConnect = [this, sock, endpoints, retries, timer, tryConnect]()
-            {
-                boost::system::error_code ignored;
-                sock->close(ignored);
+        auto resolver = std::make_shared<tcp::resolver>(m_net->io);
+        resolver->async_resolve(hostStr, std::to_string(targetPort),
+            [this, resolver, targetPort, scheduleRetry](const boost::system::error_code& resolveEc,
+                                                         tcp::resolver::results_type endpoints) mutable {
+                if (resolveEc) {
+                    scheduleRetry();
+                    return;
+                }
 
+                auto sock = std::make_shared<tcp::socket>(m_net->io);
                 boost::asio::async_connect(*sock, endpoints,
-                    [this, sock, retries, timer, tryConnect]
-                    (const boost::system::error_code& ec, const tcp::endpoint&)
-                    {
-                        if (!ec) {
-                            // Connected — send JoinRequest then read StateSync
-                            using namespace scavenger::net;
-                            GameMessage req;
-                            req.type = MsgType::JoinRequest;
-                            req.seq  = ++m_outSeq;
-                            req.payload[QStringLiteral("version")] = 1;
-                            const std::string frame =
-                                netwatch::protocol::encode(req.toJson().toStdString());
-                            boost::system::error_code wec;
-                            boost::asio::write(*sock, boost::asio::buffer(frame), wec);
-                            if (wec) return;
+                    [this, sock, targetPort, scheduleRetry](const boost::system::error_code& connectEc,
+                                                            const tcp::endpoint&) mutable {
+                        if (connectEc) {
+                            scheduleRetry();
+                            return;
+                        }
 
-                            // Read StateSync header + body (one-time init, on io thread)
-                            std::array<char,4> hdr{};
-                            boost::asio::read(*sock, boost::asio::buffer(hdr), wec);
-                            if (wec) return;
-                            const uint32_t len = netwatch::protocol::decodeHeader(hdr.data());
-                            if (len == 0 || len > kMaxFrameSize) return;
-                            std::string body(len, '\0');
-                            boost::asio::read(*sock, boost::asio::buffer(body), wec);
-                            if (wec) return;
+                        using namespace scavenger::net;
+                        GameMessage req;
+                        req.type = MsgType::JoinRequest;
+                        req.seq  = ++m_outSeq;
+                        req.payload[QStringLiteral("version")] = 1;
 
-                            GameMessage stateMsg;
-                            if (!GameMessage::fromJson(QString::fromStdString(body), stateMsg)
-                                || stateMsg.type != MsgType::StateSync) {
-                                QMetaObject::invokeMethod(this, [this]() {
-                                    emit clueRevealed("Invalid state from host.");
-                                }, Qt::QueuedConnection);
-                                return;
+                        const std::string reqFrame = netwatch::protocol::encode(req.toJson().toStdString());
+                        boost::system::error_code ioEc;
+                        boost::asio::write(*sock, boost::asio::buffer(reqFrame), ioEc);
+                        if (ioEc) {
+                            scheduleRetry();
+                            return;
+                        }
+
+                        QJsonObject statePayload;
+                        bool gotStateSync = false;
+                        for (int framesRead = 0; framesRead < 8; ++framesRead) {
+                            std::array<char, 4> hdr{};
+                            boost::asio::read(*sock, boost::asio::buffer(hdr), ioEc);
+                            if (ioEc) {
+                                break;
                             }
 
-                            m_net->socket = sock;
-                            const QJsonObject p = stateMsg.payload;
+                            const uint32_t len = netwatch::protocol::decodeHeader(hdr.data());
+                            if (len == 0 || len > kMaxFrameSize) {
+                                break;
+                            }
 
-                            // Apply state on main thread, then start read loop (fixes N2)
-                            QMetaObject::invokeMethod(this, [this, p]() {
-                                applyAuthoritativeState(p, true);
-                            }, Qt::QueuedConnection);
+                            std::string body(len, '\0');
+                            boost::asio::read(*sock, boost::asio::buffer(body), ioEc);
+                            if (ioEc) {
+                                break;
+                            }
 
-                            scheduleRead(); // persistent receive loop
+                            GameMessage msg;
+                            if (!GameMessage::fromJson(QString::fromStdString(body), msg)) {
+                                continue;
+                            }
+                            if (msg.type == MsgType::StateSync) {
+                                statePayload = msg.payload;
+                                gotStateSync = true;
+                                break;
+                            }
+                            if (msg.type == MsgType::Ping) {
+                                const std::string pongFrame = netwatch::protocol::encode(makePong(msg.seq).toJson().toStdString());
+                                boost::asio::write(*sock, boost::asio::buffer(pongFrame), ioEc);
+                                if (ioEc) {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!gotStateSync) {
+                            scheduleRetry();
                             return;
                         }
 
-                        if (++(*retries) >= 60) {
-                            QMetaObject::invokeMethod(this, [this, m = ec.message()]() {
-                                emit clueRevealed("Failed to connect: " + QString::fromStdString(m));
-                            }, Qt::QueuedConnection);
-                            return;
-                        }
-                        // Retry after 500 ms without blocking the io thread
-                        timer->expires_after(std::chrono::milliseconds(500));
-                        timer->async_wait([tryConnect](const boost::system::error_code& tec) {
-                            if (!tec) (*tryConnect)();
-                        });
+                        m_net->socket = sock;
+                        QMetaObject::invokeMethod(this, [this, statePayload, targetPort]() {
+                            applyAuthoritativeState(statePayload, true);
+                            emit clueRevealed(QStringLiteral("Connected on port %1.").arg(targetPort));
+                            if (!m_netKeepAliveTimer) {
+                                m_netKeepAliveTimer = new QTimer(this);
+                                m_netKeepAliveTimer->setInterval(5000);
+                                connect(m_netKeepAliveTimer, &QTimer::timeout, this, [this]() {
+                                    using namespace scavenger::net;
+                                    sendGameMessage(makePing(++m_outSeq).toJson());
+                                });
+                            }
+                            m_netKeepAliveTimer->start();
+                        }, Qt::QueuedConnection);
+
+                        scheduleRead();
                     });
-            };
-            (*tryConnect)();
-        });
+            });
+    };
 
+    (*tryConnect)();
     startNetworkThread();
-
-    if (!m_netKeepAliveTimer) {
-        m_netKeepAliveTimer = new QTimer(this);
-        m_netKeepAliveTimer->setInterval(5000);
-        connect(m_netKeepAliveTimer, &QTimer::timeout, this, [this]() {
-            using namespace scavenger::net;
-            sendGameMessage(makePing(++m_outSeq).toJson());
-        });
-    }
-    m_netKeepAliveTimer->start();
 }
-
-// ── Async networking helpers ───────────────────────────────────────────────
 
 void Game::startNetworkThread()
 {

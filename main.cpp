@@ -50,10 +50,10 @@ int main(int argc, char *argv[])
         gameWindow->startNewGame(diff);
     });
 
-    QObject::connect(&menu, &MainMenu::multiplayerRequested, [&]() {
+    QObject::connect(&menu, &MainMenu::multiplayerRequested, [&](bool hostMode) {
         menu.hide();
         setupGameWindow();
-        gameWindow->startMultiplayerGame();
+        gameWindow->startMultiplayerGame(hostMode);
     });
 
     menu.show();

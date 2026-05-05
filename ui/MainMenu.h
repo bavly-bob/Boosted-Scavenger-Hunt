@@ -16,7 +16,7 @@ public:
 signals:
     void difficultySelected(int difficulty);
     void continueRequested();
-    void multiplayerRequested();
+    void multiplayerRequested(bool hostMode);
     void quitRequested();
 
 protected:
