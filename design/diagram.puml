@@ -19,6 +19,16 @@ package "Enums" {
     HARD
   }
 
+  enum SessionState {
+    WAITING_FOR_PLAYERS
+    LOADING
+    PLAYING
+    WAITING_FOR_RESTART_CONFIRMATION
+    RESTARTING
+    SESSION_CLOSED
+    DISCONNECTED
+  }
+
   enum Direction {
     None
     Up
@@ -50,6 +60,31 @@ package "Enums" {
   }
 }
 
+package "Networking" {
+  enum MsgType {
+    Handshake
+    JoinRequest
+    Move
+    StateSync
+    Ping
+    Pong
+    SessionRejected
+    ReadyAck
+    RestartReady
+    SessionStateMsg
+    PeerDisconnected
+    Unknown
+  }
+
+  class GameMessage <<struct>> {
+    + type : MsgType
+    + seq : quint32
+    + payload : QJsonObject
+    + toJson() : QString
+    + fromJson(raw, out) : bool
+  }
+}
+
 package "Core" {
   abstract class GameObject {
     # m_x : int
@@ -73,9 +108,14 @@ package "Core" {
   }
 
   class InteractionResult <<struct>> {
-    + blocked : bool
-    + message : QString
-    + reason : QString
+    + scoreDelta : int
+    + coinCollected : bool
+    + coinsCollectedTotal : int
+    + revealedClues : QStringList
+    + wallOpened : bool
+    + triggerActivated : bool
+    + treasureUnlocked : bool
+    + won : bool
   }
 
   class Level {
@@ -97,15 +137,33 @@ package "Core" {
     - m_score : int
     - m_timeRemaining : int
     - m_currentLevelIndex : int
+    - m_multiplayerMode : bool
+    - m_sessionState : SessionState
+    - m_localPlayerIndex : int
     + startNewGame(diff)
+    + startMultiplayerMode()
+    + hostMultiplayerSession(port)
+    + joinMultiplayerSession(host, port)
     + startLevel(levelIndex, diff)
     + restartLevel()
     + nextLevel()
     + saveGame(filepath)
     + loadGame(filepath) : bool
     + handleInput(dir)
+    + handleInputForPlayer(playerIndex, dir)
     + pause()
     + resume()
+    + coinsToUnlock() : int
+    <<signals>>
+    + sessionStateChanged(stateInt)
+    + peerDisconnected(reason)
+    + sessionRejected(reason)
+    + coinCollected(total)
+  }
+
+  class NetState <<PIMPL>> {
+    + io : boost::asio::io_context
+    + socket : std::shared_ptr<tcp::socket>
   }
 
   class AIHelper {
@@ -116,10 +174,13 @@ package "Core" {
 package "Gameplay" {
   class Player {
     - m_coinsCollected : int
+    - m_coinsRequired : int
     - m_isMoving : bool
     + updateMovement(dt)
     + move(dir, level)
     + advanceAnimation()
+    + setCoinsRequired(n)
+    + canEnterTreasureRoom() : bool
   }
 
   class PlayerAnimator {
@@ -146,7 +207,18 @@ package "Gameplay" {
 package "Systems" {
   class LevelLoader {
     + loadFromJson(filePath) : Level
+    + generateProcedural(seed, diff, context) : Level
     + getAvailableLevels(levelsDir) : QStringList
+  }
+
+  class DifficultyConfig {
+    + loadFromJson(filePath) : DifficultyConfig
+    + selectProfile(diff, seed, runIndex) : DifficultyProfile
+  }
+
+  class ProceduralGenerationRules <<struct>> {
+    + startingTime : int
+    + coinsRequired : int
   }
 
   class ClueManager {
@@ -169,10 +241,20 @@ package "Systems" {
 
 package "UI" {
   class MainMenu
-  class GameWindow
+  class GameWindow {
+    - m_displayedCoins : int
+    - m_coinsToUnlock : int
+    - m_bgCache : QPixmap
+    + onCoinCollected(total)
+    + onSessionStateChanged(stateInt)
+    + onPeerDisconnected(reason)
+    + onSessionRejected(reason)
+  }
   class GameScreen
   class PauseOverlay
-  class GameOverOverlay
+  class GameOverOverlay {
+    + setMultiplayerWaiting(bool)
+  }
 }
 
 GameObject <|-- Player
@@ -192,10 +274,13 @@ GameWindow *-- Game
 Game *-- Level
 Game *-- Player
 Game *-- AIHelper
+Game *-- NetState
 Game ..> ClueManager
 Game ..> LevelLoader
 Game ..> GameState
 Game ..> Difficulty
+Game ..> SessionState
+Game ..> GameMessage
 
 Level *-- Chamber
 Level *-- Enemy
@@ -205,6 +290,8 @@ Level *-- TriggerWall
 Level *-- HiddenWall
 Level *-- TreasureRoom
 Level *-- ClueTrigger
+
+DifficultyConfig ..> ProceduralGenerationRules
 
 InputHandler ..> Direction
 
