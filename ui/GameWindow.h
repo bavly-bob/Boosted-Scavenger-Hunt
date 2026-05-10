@@ -42,6 +42,12 @@ private slots:
     void onTreasureUnlocked();
     void onWaitingForTeammate(int playerIndex);
     void onGameOver(bool won, int score);
+    // ── Session state machine slots ──────────────────────────────────────────
+    void onSessionStateChanged(int stateInt); // casts to SessionState internally
+    void onPeerDisconnected(const QString& reason);
+    void onSessionRejected(const QString& reason);
+    // ── Coin / HUD event slots ───────────────────────────────────────────────
+    void onCoinCollected(int total); // updates m_displayedCoins + starts pop anim
 
 private:
     void ensureLevelsConfigured();
@@ -86,14 +92,24 @@ private:
     bool     m_isFullscreen = false;
     QSize    m_preferredSize;
 
+    // ── Event-driven coin tracking (not polled from Game every frame) ─────
+    int      m_displayedCoins  = 0; // last value received via coinCollected signal
+    int      m_coinsToUnlock   = 3; // from difficulty config; updated on levelChanged
+
+    // ── Background gradient cache (rebuilt only on level change or resize) ──
+    QPixmap  m_bgCache;             // pre-rendered background; invalid = needs rebuild
+    QPixmap  m_hudBgCache;          // pre-rendered HUD bar background
+    int      m_bgCacheLevelIdx = -1;
+    QSize    m_bgCacheSize;         // detect window resize
+
     QPushButton* m_hudRestartBtn;
     QPushButton* m_hudQuitBtn;
 
     QElapsedTimer m_statusTimer;
     int m_statusDurationMs;
 
-    int m_prevCoins;
     QElapsedTimer m_coinPopTimer;
+
     QElapsedTimer m_objectiveFlashTimer;
     bool m_objectiveFlashActive;
 

@@ -1822,10 +1822,11 @@ Level* LevelLoader::generateProcedural(int seed,
     }
 
     int enemiesPlaced = 0;
-    for (int node : enemyPriority) {
+    for (int i = 0; i < chambers.size(); ++i) {
         if (enemiesPlaced >= tpl.enemyTarget) {
             break;
         }
+        int node = enemyPriority[i];
         if (node == spawnNode || node == treasureNode || node == lootRoomNode) {
             continue;
         }

@@ -9,7 +9,6 @@
 
 Player::Player(int x, int y)
     : GameObject(x, y),
-      m_coinsCollected(0),
       m_targetX(x),
       m_targetY(y),
       m_pixelX(static_cast<float>(x)),
@@ -171,9 +170,14 @@ int Player::getCoinsCollected() const
     return m_coinsCollected;
 }
 
+void Player::setCoinsRequired(int n)
+{
+    m_coinsRequired = qMax(1, n);
+}
+
 bool Player::canEnterTreasureRoom() const
 {
-    return m_coinsCollected >= 3;
+    return m_coinsCollected >= m_coinsRequired;
 }
 
 void Player::teleportTo(int x, int y)

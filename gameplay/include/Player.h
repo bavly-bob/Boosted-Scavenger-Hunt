@@ -9,7 +9,8 @@ class QPainter;
 class SpriteManager;
 
 class Player : public GameObject {
-    int  m_coinsCollected;
+    int  m_coinsCollected  = 0;
+    int  m_coinsRequired   = 3;   // set from difficulty config via setCoinsRequired()
 
     int   m_targetX;
     int   m_targetY;
@@ -40,8 +41,10 @@ public:
     void move(Direction dir, const Level& level);
     void collectCoin();
     void setCoinsCollected(int coins);
+    void setCoinsRequired(int n);   // called after level load from difficulty config
     int  getCoinsCollected() const;
     bool canEnterTreasureRoom() const;
+
     void teleportTo(int x, int y);
 
     bool isAtTarget() const;

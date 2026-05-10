@@ -10,6 +10,7 @@ GameOverOverlay::GameOverOverlay(QWidget *parent)
     : QWidget(parent),
       m_titleLabel(new QLabel(this)),
       m_scoreLabel(new QLabel(this)),
+      m_waitingLabel(new QLabel(this)),
       m_nextLevelButton(new QPushButton("Next Level", this)),
       m_restartButton(new QPushButton("Restart Level", this)),
       m_mainMenuButton(new QPushButton("Main Menu", this))
@@ -48,6 +49,14 @@ GameOverOverlay::GameOverOverlay(QWidget *parent)
     layout->addSpacing(12);
     layout->addWidget(m_nextLevelButton);
     layout->addWidget(m_restartButton);
+
+    m_waitingLabel->setAlignment(Qt::AlignCenter);
+    m_waitingLabel->setStyleSheet(
+        "color: rgba(180,220,255,0.85); font-size: 12px; font-style: italic;");
+    m_waitingLabel->setText("Waiting for peer to confirm restart...");
+    m_waitingLabel->hide();
+    layout->addWidget(m_waitingLabel);
+
     layout->addWidget(m_mainMenuButton);
     layout->addStretch(2);
 
@@ -61,6 +70,15 @@ void GameOverOverlay::setResult(bool won, int score, bool hasNextLevel)
     m_titleLabel->setText(won ? "YOU WIN" : "GAME OVER");
     m_scoreLabel->setText(QString("Score: %1").arg(score));
     m_nextLevelButton->setVisible(hasNextLevel);
+    // Reset waiting state whenever a new result is shown
+    setMultiplayerWaiting(false);
+}
+
+void GameOverOverlay::setMultiplayerWaiting(bool waiting)
+{
+    m_restartButton->setEnabled(!waiting);
+    m_restartButton->setText(waiting ? "Restart (sent)" : "Restart Level");
+    m_waitingLabel->setVisible(waiting);
 }
 
 void GameOverOverlay::paintEvent(QPaintEvent *event)

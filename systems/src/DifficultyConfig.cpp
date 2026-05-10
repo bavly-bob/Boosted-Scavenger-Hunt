@@ -36,7 +36,8 @@ QString difficultyName(Difficulty difficulty)
 ProceduralGenerationRules parseRules(const QJsonObject& object)
 {
     ProceduralGenerationRules rules;
-    rules.startingTime = qMax(10, object.value("startingTime").toInt(rules.startingTime));
+    rules.startingTime  = qMax(10, object.value("startingTime").toInt(rules.startingTime));
+    rules.coinsRequired = qMax(1, object.value("coinsRequired").toInt(rules.coinsRequired));
 
     const QJsonObject loot = object.value("lootRoom").toObject();
     rules.lootRoom.spawnFrequency = qBound(0.0, loot.value("spawnFrequency").toDouble(rules.lootRoom.spawnFrequency), 1.0);

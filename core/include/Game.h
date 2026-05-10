@@ -2,6 +2,7 @@
 
 #include "DifficultyConfig.h"
 #include "Enums.h"
+#include <cstdint>
 
 #include <QObject>
 #include <QPoint>
@@ -80,12 +81,26 @@ class Game : public QObject {
 
     QTimer* m_netKeepAliveTimer = nullptr;    // pings peer every 5 s
 
+    // ── Session state machine ─────────────────────────────────────────────
+    // m_sessionState is authoritative on host; mirrored on joiner via SessionStateMsg.
+    // Only the host transitions the state; the joiner observes.
+    SessionState m_sessionState = SessionState::WAITING_FOR_PLAYERS;
+    bool m_restartReadyFlags[2] = {false, false}; // [0]=host, [1]=joiner
+    QTimer* m_sessionTimeoutTimer = nullptr;  // guards WAITING_FOR_RESTART_CONFIRMATION
+
     // Internal helpers (called from I/O thread; signal back to main thread)
     void startNetworkThread();
     void stopNetworkThread();
     void sendGameMessage(const QString& json);
     void scheduleRead();
     void onRawMessage(const std::string& raw);// called on I/O thread → Qt::QueuedConnection
+
+    // Session state helpers (main thread only)
+    void setSessionState(SessionState next);      // update + broadcast to peer
+    void onRestartReadyReceived(int playerIndex); // collect ACK from one side
+    void tryCommitRestart();                      // fire when both ACKs received
+    void startSessionTimeout(int ms);             // arm the ACK-wait watchdog
+    void stopSessionTimeout();                    // disarm
 
 public:
     explicit Game(QObject* parent = nullptr);
@@ -127,6 +142,7 @@ public:
     int currentLevelIndex() const;
     QString currentLevelName() const;
     int coinsCollected() const;
+    int coinsToUnlock() const;   // from active difficulty profile (default 3)
     QPoint playerPosition(int playerIndex = 0) const;
     int playerCount() const;
     bool isMultiplayerMode() const;
@@ -144,6 +160,13 @@ signals:
     void gameOver(bool won, int score);
     void timerTick(int secondsLeft);
     void levelChanged(int levelIndex);
+    // ── Session management signals ──────────────────────────────────────
+    // Signals use int instead of SessionState so Qt moc does not need
+    // to resolve the external enum type in generated dispatch code.
+    // Receivers cast: static_cast<SessionState>(intValue).
+    void sessionStateChanged(int newState); // SessionState cast on receive
+    void peerDisconnected(const QString& reason);
+    void sessionRejected(const QString& reason);
 
 private slots:
     void onTick();

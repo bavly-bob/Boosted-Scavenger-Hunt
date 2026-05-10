@@ -21,7 +21,8 @@ struct ProceduralHiddenWallRules {
 };
 
 struct ProceduralGenerationRules {
-    int startingTime = 180;
+    int startingTime   = 180;
+    int coinsRequired  = 3;   // coins needed to unlock the treasure room
     ProceduralLootRules lootRoom;
     ProceduralTriggerRules generalTriggers;
     ProceduralHiddenWallRules hiddenWalls;

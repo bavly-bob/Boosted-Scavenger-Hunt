@@ -152,11 +152,7 @@ void Game::initSounds()
     setup(m_sfxBlocked,       base + "blocked.wav");
     setup(m_sfxClue, base + "clue.wav");
 
-    QTimer::singleShot(2000, this, [this]() {
-        qDebug() << "blocked status:" << m_sfxBlocked.status();
-        qDebug() << "coin status:"    << m_sfxCoin.status();
-        qDebug() << "win status:"     << m_sfxWin.status();
-    });
+    // Sounds are loaded asynchronously; no blocking status check needed here.
 }
 
 void Game::setLevelFiles(const QStringList& levelFiles)
@@ -343,6 +339,23 @@ void Game::hostMultiplayerSession(int port)
                 return;
             }
 
+            // ── Session-full guard ─────────────────────────────────────────
+            // Reject any second joiner while a peer is already connected.
+            if (m_net->socket && m_net->socket->is_open()) {
+                using namespace scavenger::net;
+                boost::system::error_code ignored;
+                const std::string rej = netwatch::protocol::encode(
+                    makeSessionRejected(++m_outSeq, QStringLiteral("Session full")).toJson().toStdString());
+                boost::asio::write(*sockPtr, boost::asio::buffer(rej), ignored);
+                sockPtr->shutdown(tcp::socket::shutdown_both, ignored);
+                sockPtr->close(ignored);
+                // Keep the acceptor open so a future attempt can succeed
+                QMetaObject::invokeMethod(this, [this]() {
+                    emit clueRevealed("A second joiner was rejected (session full).");
+                }, Qt::QueuedConnection);
+                return;
+            }
+
             m_net->socket = sockPtr;
 
             const std::string peerAddr = [&]() -> std::string {
@@ -351,7 +364,10 @@ void Game::hostMultiplayerSession(int port)
             }();
 
             QMetaObject::invokeMethod(this, [this, peerAddr]() {
-                emit clueRevealed("Peer joined from " + QString::fromStdString(peerAddr) + ". Starting shared run.");
+                emit clueRevealed("Peer joined from " + QString::fromStdString(peerAddr) + ". Loading shared run...");
+                // Transition to LOADING before startLevel so the joiner knows
+                // it should wait for ReadyAck round-trip before sending moves.
+                setSessionState(SessionState::LOADING);
                 startLevel(0, Difficulty::HARD);
                 emit clueRevealed("Multiplayer co-op: shared coins, shared deaths, synchronized level progression.");
                 if (!m_netKeepAliveTimer) {
@@ -498,6 +514,16 @@ void Game::joinMultiplayerSession(const QString& host, int port)
                             if (!GameMessage::fromJson(QString::fromStdString(body), msg)) {
                                 continue;
                             }
+                            if (msg.type == MsgType::SessionRejected) {
+                                // Host explicitly rejected us — do not retry
+                                const QString reason = msg.payload.value(
+                                    QStringLiteral("reason")).toString(QStringLiteral("Unknown"));
+                                QMetaObject::invokeMethod(this, [this, reason]() {
+                                    emit sessionRejected(reason);
+                                    emit clueRevealed("Session rejected by host: " + reason);
+                                }, Qt::QueuedConnection);
+                                return;
+                            }
                             if (msg.type == MsgType::StateSync) {
                                 statePayload = msg.payload;
                                 gotStateSync = true;
@@ -584,7 +610,17 @@ void Game::scheduleRead()
         {
             if (ec) {
                 QMetaObject::invokeMethod(this, [this]() {
-                    emit clueRevealed("Peer disconnected.");
+                    using namespace scavenger::net;
+                    // Notify the remaining client (if host) then tear down cleanly
+                    if (m_localPlayerIndex == 0 && isAuthoritativeMultiplayerPeer()) {
+                        sendGameMessage(makePeerDisconnected(++m_outSeq,
+                            QStringLiteral("Peer connection lost")).toJson());
+                    }
+                    setSessionState(m_localPlayerIndex == 0
+                        ? SessionState::SESSION_CLOSED
+                        : SessionState::DISCONNECTED);
+                    emit peerDisconnected(QStringLiteral("Connection to peer lost."));
+                    stopNetworkThread();
                 }, Qt::QueuedConnection);
                 return;
             }
@@ -643,6 +679,56 @@ void Game::onRawMessage(const std::string& raw)
             applyAuthoritativeState(payload, false);
         }, Qt::QueuedConnection);
         break;
+
+    // ── Session management messages ──────────────────────────────────────
+    case MsgType::RestartReady: {
+        // Only the host processes this — the joiner never receives it
+        if (m_localPlayerIndex != 0) break;
+        const int fromPlayer = msg.payload.value(QStringLiteral("pi")).toInt(1);
+        QMetaObject::invokeMethod(this, [this, fromPlayer]() {
+            onRestartReadyReceived(fromPlayer);
+        }, Qt::QueuedConnection);
+        break;
+    }
+    case MsgType::ReadyAck: {
+        // Only the host cares: joiner has finished loading.
+        if (m_localPlayerIndex != 0) break;
+        QMetaObject::invokeMethod(this, [this]() {
+            if (m_sessionState == SessionState::LOADING ||
+                m_sessionState == SessionState::RESTARTING) {
+                // Both sides are loaded — open gameplay
+                setSessionState(SessionState::PLAYING);
+            }
+        }, Qt::QueuedConnection);
+        break;
+    }
+    case MsgType::SessionStateMsg: {
+        // Joiner mirrors the host's authoritative state
+        const int ssVal = msg.payload.value(QStringLiteral("ss")).toInt(-1);
+        if (ssVal < 0) break;
+        const SessionState ss = static_cast<SessionState>(ssVal);
+        QMetaObject::invokeMethod(this, [this, ss, ssVal]() {
+            m_sessionState = ss;
+            emit sessionStateChanged(ssVal); // emit as int
+            if (ss == SessionState::SESSION_CLOSED ||
+                ss == SessionState::DISCONNECTED) {
+                emit peerDisconnected(QStringLiteral("Host closed the session."));
+                stopNetworkThread();
+            }
+        }, Qt::QueuedConnection);
+        break;
+    }
+    case MsgType::PeerDisconnected: {
+        const QString reason = msg.payload.value(
+            QStringLiteral("reason")).toString(QStringLiteral("Unknown"));
+        QMetaObject::invokeMethod(this, [this, reason]() {
+            m_sessionState = SessionState::DISCONNECTED;
+            emit sessionStateChanged(static_cast<int>(SessionState::DISCONNECTED));
+            emit peerDisconnected(reason);
+            stopNetworkThread();
+        }, Qt::QueuedConnection);
+        break;
+    }
     default:
         break;
     }
@@ -696,7 +782,8 @@ void Game::sendAuthoritativeState()
                                   p1.x(),
                                   p1.y(),
                                   m_playerReachedTreasure[0],
-                                  m_playerReachedTreasure[1]).toJson());
+                                  m_playerReachedTreasure[1],
+                                  static_cast<int>(m_sessionState)).toJson());
 }
 
 void Game::applyAuthoritativeState(const QJsonObject& payload, bool announceConnection)
@@ -724,6 +811,38 @@ void Game::applyAuthoritativeState(const QJsonObject& payload, bool announceConn
         || m_runSeedBase != seedBase
         || m_runIndex != runIndex;
 
+    // ── Session state from the authoritative host ──────────────────────────────
+    const int ssRaw = payload.value(QStringLiteral("sessionState")).toInt(
+        static_cast<int>(SessionState::PLAYING));
+    const SessionState remoteSession = static_cast<SessionState>(ssRaw);
+
+    // Joiner must only trigger a level reload when the host signals RESTARTING
+    // or LOADING.  Any StateSync that arrives while we're still in PLAYING must
+    // NOT reload — it is just a positional update.
+    const bool hostAuthorisesReload = (remoteSession == SessionState::RESTARTING ||
+                                       remoteSession == SessionState::LOADING);
+
+    if (needsLevelReload && !hostAuthorisesReload) {
+        // Ignore the reload portion; still apply position/score/timer updates below.
+    } else if (needsLevelReload && hostAuthorisesReload) {
+        m_multiplayerMode = true;
+        m_score = payload.value(QStringLiteral("score")).toInt(0);
+        m_highScore = payload.value(QStringLiteral("highScore")).toInt(m_score);
+        m_runSeedBase = seedBase;
+        m_runIndex = runIndex;
+        m_lootRoomsSpawned = lootRoomsSpawned;
+
+        const DifficultyProfile profile = m_difficultyConfig.selectProfile(diff, m_runSeedBase, m_runIndex);
+        m_activeDifficultyProfileId = profile.id;
+        m_activeGenerationRules     = profile.rules;
+
+        m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
+        startLevel(levelIndex, diff);
+        // startLevel() sends ReadyAck to host (joiner path) and returns
+        // — the rest of this function continues to sync timers/positions.
+    }
+
+    // Always sync these regardless of whether a reload happened
     m_multiplayerMode = true;
     m_score = payload.value(QStringLiteral("score")).toInt(0);
     m_highScore = payload.value(QStringLiteral("highScore")).toInt(m_score);
@@ -733,16 +852,11 @@ void Game::applyAuthoritativeState(const QJsonObject& payload, bool announceConn
 
     const DifficultyProfile profile = m_difficultyConfig.selectProfile(diff, m_runSeedBase, m_runIndex);
     m_activeDifficultyProfileId = profile.id;
-    m_activeGenerationRules = profile.rules;
+    m_activeGenerationRules     = profile.rules;
 
-    if (needsLevelReload) {
-        m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
-        startLevel(levelIndex, diff);
-    }
-
-    m_runTimeElapsed = qMax(0, payload.value(QStringLiteral("runTimeSeconds")).toInt(0));
-    m_levelTimeElapsed = qMax(0, payload.value(QStringLiteral("levelTimeSeconds")).toInt(0));
-    m_timeRemaining = qMax(0, payload.value(QStringLiteral("timeRemaining")).toInt(m_timeRemaining));
+    m_runTimeElapsed  = qMax(0, payload.value(QStringLiteral("runTimeSeconds")).toInt(0));
+    m_levelTimeElapsed= qMax(0, payload.value(QStringLiteral("levelTimeSeconds")).toInt(0));
+    m_timeRemaining   = qMax(0, payload.value(QStringLiteral("timeRemaining")).toInt(m_timeRemaining));
     applySharedCoins(payload.value(QStringLiteral("sharedCoins")).toInt(m_sharedCoinsCollected));
     m_playerReachedTreasure[0] = payload.value(QStringLiteral("p0ReachedTreasure")).toBool(false);
     m_playerReachedTreasure[1] = payload.value(QStringLiteral("p1ReachedTreasure")).toBool(false);
@@ -754,6 +868,12 @@ void Game::applyAuthoritativeState(const QJsonObject& payload, bool announceConn
     if (m_players[1]) {
         m_players[1]->teleportTo(payload.value(QStringLiteral("p1x")).toInt(m_players[1]->getX()),
                                  payload.value(QStringLiteral("p1y")).toInt(m_players[1]->getY()));
+    }
+
+    // Mirror session state from host
+    if (m_sessionState != remoteSession) {
+        m_sessionState = remoteSession;
+        emit sessionStateChanged(static_cast<int>(remoteSession));
     }
 
     const int stateValue = payload.value(QStringLiteral("gameState")).toInt(static_cast<int>(GameState::PLAYING));
@@ -882,11 +1002,28 @@ void Game::startLevel(int levelIndex, Difficulty diff)
         m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
     }
 
+    // Apply the config-driven coin requirement to every player.
+    const int coinsNeeded = m_activeGenerationRules.coinsRequired;
+    for (auto& p : m_players) {
+        if (p) p->setCoinsRequired(coinsNeeded);
+    }
+
     emit levelChanged(m_currentLevelIndex);
     emit timerTick(m_timeRemaining);
     emit gameUpdated();
     m_timer->start();
-    sendAuthoritativeState();
+
+    // ── ReadyAck handshake ───────────────────────────────────────────────
+    if (m_multiplayerMode && m_localPlayerIndex == 0) {
+        // Host sends authoritative state; joiner learns the new seed/index and
+        // starts its own level. SessionState stays LOADING until ReadyAck arrives.
+        sendAuthoritativeState();
+    } else if (m_multiplayerMode && m_localPlayerIndex != 0) {
+        // Joiner signals it has finished loading
+        using namespace scavenger::net;
+        sendGameMessage(makeReadyAck(++m_outSeq).toJson());
+    }
+    // Single-player: nothing to send.
 }
 
 void Game::nextLevel()
@@ -907,7 +1044,27 @@ void Game::nextLevel()
 
 void Game::restartLevel()
 {
-    startLevel(m_currentLevelIndex, m_difficulty);
+    // ── Single-player: reload immediately (unchanged behaviour)
+    if (!m_multiplayerMode) {
+        startLevel(m_currentLevelIndex, m_difficulty);
+        return;
+    }
+
+    // ── Multiplayer: 2-phase commit ──────────────────────────────────
+    // Only accept a restart request while we are in the correct waiting state.
+    // Spurious calls (e.g. key held down, duplicate UI events) are ignored.
+    if (m_sessionState != SessionState::WAITING_FOR_RESTART_CONFIRMATION) {
+        return;
+    }
+
+    using namespace scavenger::net;
+    if (m_localPlayerIndex == 0) {
+        // Host counts itself as ready immediately
+        onRestartReadyReceived(0);
+    } else {
+        // Joiner sends its ACK to the host
+        sendGameMessage(makeRestartReady(++m_outSeq, m_localPlayerIndex).toJson());
+    }
 }
 
 void Game::saveGame(const QString& filepath)
@@ -997,6 +1154,12 @@ void Game::handleInput(Direction dir)
 
 void Game::handleInputForPlayer(int playerIndex, Direction dir)
 {
+    // ── Session gate: block all moves unless the session is in PLAYING state.
+    // This prevents Move packets from corrupting state during level loads,
+    // restarts, or death screens on either side.
+    if (m_multiplayerMode && m_sessionState != SessionState::PLAYING) {
+        return;
+    }
     if (m_state != GameState::PLAYING || !m_currentLevel || dir == Direction::None) {
         return;
     }
@@ -1126,7 +1289,14 @@ void Game::handleInputForPlayer(int playerIndex, Direction dir)
     }
 
     emit gameUpdated();
-    sendAuthoritativeState();
+    // Send a full StateSync only when meaningful state changed (score or coins).
+    // Pure movement is handled by the lightweight Move packet; the 1-Hz onTick
+    // StateSync corrects any position drift. This removes the biggest per-keypress
+    // CPU/network overhead in both single-player and multiplayer.
+    if (interaction.scoreDelta != 0 || interaction.coinCollected) {
+        sendAuthoritativeState();
+    }
+
 }
 
 void Game::pause()
@@ -1212,6 +1382,11 @@ int Game::playerCount() const
     return m_players[1] ? 2 : (m_players[0] ? 1 : 0);
 }
 
+int Game::coinsToUnlock() const
+{
+    return m_activeGenerationRules.coinsRequired;
+}
+
 bool Game::isMultiplayerMode() const
 {
     return m_multiplayerMode;
@@ -1236,14 +1411,19 @@ void Game::onTick()
         return;
     }
 
+    // Pre-compute once per tick: whether dual-player enemy targeting is active.
+    const bool dualPlayerActive = m_multiplayerMode && m_players[0] && m_players[1];
+
     if (m_currentLevel) {
         const Player* chaseTarget = m_players[0].get();
         for (Enemy* enemy : m_currentLevel->getEnemies()) {
             enemy->advanceAnimation();
             const Player* target = chaseTarget;
-            if (m_multiplayerMode && m_players[0] && m_players[1]) {
-                const int d0 = qAbs(enemy->getX() - m_players[0]->getX()) + qAbs(enemy->getY() - m_players[0]->getY());
-                const int d1 = qAbs(enemy->getX() - m_players[1]->getX()) + qAbs(enemy->getY() - m_players[1]->getY());
+            if (dualPlayerActive) {
+                const int d0 = qAbs(enemy->getX() - m_players[0]->getX())
+                             + qAbs(enemy->getY() - m_players[0]->getY());
+                const int d1 = qAbs(enemy->getX() - m_players[1]->getX())
+                             + qAbs(enemy->getY() - m_players[1]->getY());
                 target = (d1 < d0) ? static_cast<const Player*>(m_players[1].get())
                                    : static_cast<const Player*>(m_players[0].get());
             }
@@ -1253,10 +1433,9 @@ void Game::onTick()
 
             if (!enemy->isDead()) {
                 for (const auto& maybePlayer : m_players) {
-                    if (!maybePlayer) {
-                        continue;
-                    }
-                    if (enemy->getX() == maybePlayer->getX() && enemy->getY() == maybePlayer->getY()) {
+                    if (!maybePlayer) continue;
+                    if (enemy->getX() == maybePlayer->getX() &&
+                        enemy->getY() == maybePlayer->getY()) {
                         endRunWithFailure();
                         return;
                     }
@@ -1293,7 +1472,7 @@ void Game::onTick()
 
 void Game::endRunWithFailure()
 {
-    m_sfxGameOver.stop(); 
+    m_sfxGameOver.stop();
     m_sfxGameOver.play();
     m_state = GameState::GAME_OVER;
     m_timer->stop();
@@ -1301,6 +1480,22 @@ void Game::endRunWithFailure()
     const int finalScore = m_score;
     if (finalScore > m_highScore) {
         m_highScore = finalScore;
+    }
+
+    if (m_multiplayerMode) {
+        // Brief PLAYER_DEAD state so the joiner sees the transition
+        setSessionState(SessionState::PLAYER_DEAD);
+
+        if (m_localPlayerIndex == 0) {
+            // Host: move to WAITING_FOR_RESTART_CONFIRMATION and arm timeout.
+            // Both flags cleared — we need ACKs from both sides before reloading.
+            m_restartReadyFlags[0] = false;
+            m_restartReadyFlags[1] = false;
+            setSessionState(SessionState::WAITING_FOR_RESTART_CONFIRMATION);
+            startSessionTimeout(30000); // 30 s watchdog
+        }
+        // Joiner: waits for the host's WAITING_FOR_RESTART_CONFIRMATION broadcast,
+        // then shows the game-over screen. It sends RestartReady when user presses Restart.
     }
 
     sendAuthoritativeState();
@@ -1381,4 +1576,90 @@ void Game::handlePlayerReachedTreasure(int playerIndex)
     }
     emit clueRevealed("Both hunters reached the treasure. Descending...");
     nextLevel();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session state machine helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Game::setSessionState(SessionState next)
+{
+    if (m_sessionState == next) return;
+    m_sessionState = next;
+    // Emit as int — the signal signature uses int to avoid moc type-resolution
+    // issues with externally-defined enums. Receivers cast back to SessionState.
+    emit sessionStateChanged(static_cast<int>(next));
+
+    // Host broadcasts every state change so the joiner stays in sync.
+    if (isAuthoritativeMultiplayerPeer()) {
+        using namespace scavenger::net;
+        sendGameMessage(makeSessionStateMsg(++m_outSeq, next).toJson());
+    }
+}
+
+void Game::onRestartReadyReceived(int playerIndex)
+{
+    if (m_sessionState != SessionState::WAITING_FOR_RESTART_CONFIRMATION) return;
+    if (playerIndex < 0 || playerIndex > 1) return;
+
+    m_restartReadyFlags[playerIndex] = true;
+    tryCommitRestart();
+}
+
+void Game::tryCommitRestart()
+{
+    // Only commit when BOTH sides have ACKed
+    if (!m_restartReadyFlags[0] || !m_restartReadyFlags[1]) return;
+
+    stopSessionTimeout();
+    setSessionState(SessionState::RESTARTING);
+
+    // Generate a fresh seed so both sides produce identical procedural maps.
+    // This is the single place where m_runIndex and m_runSeedBase advance on restart.
+    ++m_runIndex;
+    m_runSeedBase = QRandomGenerator::global()->generate();
+
+    const DifficultyProfile profile =
+        m_difficultyConfig.selectProfile(m_difficulty, m_runSeedBase, m_runIndex);
+    m_activeDifficultyProfileId = profile.id;
+    m_activeGenerationRules     = profile.rules;
+    m_timeRemaining = qMax(10, m_activeGenerationRules.startingTime);
+    m_score = 0;
+    m_sharedCoinsCollected = 0;
+    m_lootRoomsSpawned = 0;
+    m_runTimeElapsed = 0;
+    m_levelTimeElapsed = 0;
+
+    // Broadcast the new seed+runIndex BEFORE loading so the joiner can
+    // start loading the same map deterministically.  SessionState in the
+    // payload is RESTARTING, which authorises the joiner to call startLevel.
+    sendAuthoritativeState();
+
+    // Host loads its own copy; startLevel() will send the second StateSync
+    // (SessionState still RESTARTING/LOADING) so the joiner also loads.
+    startLevel(m_currentLevelIndex, m_difficulty);
+    // SessionState transitions to PLAYING when the host receives the joiner's ReadyAck.
+}
+
+void Game::startSessionTimeout(int ms)
+{
+    if (!m_sessionTimeoutTimer) {
+        m_sessionTimeoutTimer = new QTimer(this);
+        m_sessionTimeoutTimer->setSingleShot(true);
+        connect(m_sessionTimeoutTimer, &QTimer::timeout, this, [this]() {
+            if (m_sessionState == SessionState::WAITING_FOR_RESTART_CONFIRMATION) {
+                setSessionState(SessionState::SESSION_CLOSED);
+                emit peerDisconnected(
+                    QStringLiteral("Restart acknowledgement timed out. Session closed."));
+                stopNetworkThread();
+            }
+        });
+    }
+    m_sessionTimeoutTimer->start(ms);
+}
+
+void Game::stopSessionTimeout()
+{
+    if (m_sessionTimeoutTimer)
+        m_sessionTimeoutTimer->stop();
 }

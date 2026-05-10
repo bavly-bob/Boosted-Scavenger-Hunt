@@ -205,8 +205,8 @@ GameWindow::GameWindow(QWidget *parent)
       m_hudRestartBtn(new QPushButton("Restart", this)),
       m_hudQuitBtn(new QPushButton("Quit", this)),
       m_statusDurationMs(3000),
-      m_prevCoins(0),
       m_objectiveFlashActive(false)
+
 {
     setWindowTitle("Scavenger Hunt");
     setFocusPolicy(Qt::StrongFocus);
@@ -249,6 +249,12 @@ GameWindow::GameWindow(QWidget *parent)
     connect(m_game, &Game::treasureUnlocked,  this, &GameWindow::onTreasureUnlocked);
     connect(m_game, &Game::waitingForTeammate, this, &GameWindow::onWaitingForTeammate);
     connect(m_game, &Game::gameOver,          this, &GameWindow::onGameOver);
+    // ── Session state machine signals ──────────────────────────────────
+    connect(m_game, &Game::sessionStateChanged, this, &GameWindow::onSessionStateChanged);
+    connect(m_game, &Game::peerDisconnected,    this, &GameWindow::onPeerDisconnected);
+    connect(m_game, &Game::sessionRejected,     this, &GameWindow::onSessionRejected);
+    // ── Coin UI ──────────────────────────────────────────────────────
+    connect(m_game, &Game::coinCollected, this, &GameWindow::onCoinCollected);
 
     m_renderTimer->setInterval(16);
     connect(m_renderTimer, &QTimer::timeout, this, [this]() {
@@ -296,7 +302,13 @@ GameWindow::GameWindow(QWidget *parent)
         setFocus();
     });
     connect(m_gameOverOverlay, &GameOverOverlay::restartRequested, this, [this]() {
-        m_gameOverOverlay->hide();
+        if (m_game->isMultiplayerMode()) {
+            // Show waiting indicator before forwarding — duplicate presses are
+            // silently dropped by Game::restartLevel (state guard).
+            m_gameOverOverlay->setMultiplayerWaiting(true);
+        } else {
+            m_gameOverOverlay->hide();
+        }
         m_statusText.clear();
         m_statusIsAiHint = false;
         m_game->restartLevel();
@@ -778,9 +790,9 @@ void GameWindow::paintEvent(QPaintEvent *event)
             p.drawText(r, flags, t);
         };
 
-        const QString levelName    = m_game->currentLevelName();
-        const int     coins        = m_game->coinsCollected();
-        const int     timeRemaining= m_game->timeRemaining();
+        const QString levelName     = m_game->currentLevelName();
+        const int     timeRemaining  = m_game->timeRemaining();
+        // NOTE: coin count is read from m_displayedCoins (event-driven, not polled)
 
         // ── LEFT GROUP: level name + score/high-score ────────────────────────
         {
@@ -805,11 +817,12 @@ void GameWindow::paintEvent(QPaintEvent *event)
 
         // ── CENTER GROUP: coin tracker ───────────────────────────────────────
         {
+            const int numCoins = m_coinsToUnlock; // config-driven (default 3)
             const int CX = width() / 2;  // center pivot
             const int CY = H / 2;
             const int spacing = 22;
-            const int totalW  = 3 * spacing;
-            const int startX  = CX - totalW / 2;
+            const int totalW  = numCoins * spacing;
+            const int startX  = CX - totalW / 2 + spacing / 2;
 
             // Label above dots
             QFont lf = p.font();
@@ -817,41 +830,38 @@ void GameWindow::paintEvent(QPaintEvent *event)
             lf.setBold(false);
             p.setFont(lf);
             shadowText(QRect(CX - 60, 5, 120, 16), Qt::AlignCenter,
-                       QStringLiteral("COINS"), QColor(148, 163, 184));  // neutral slate
+                       QStringLiteral("COINS"), QColor(148, 163, 184));
 
-            if (coins > m_prevCoins) {
-                m_coinPopTimer.start();
-                m_prevCoins = coins;
-            }
-
-            for (int i = 0; i < 3; ++i) {
-                const bool filled = (i < coins);
-                // Animate the most-recently-collected coin
+            // m_displayedCoins is updated by onCoinCollected signal — no polling.
+            // m_coinPopTimer is started in that slot, not inside paintEvent.
+            for (int i = 0; i < numCoins; ++i) {
+                const bool filled = (i < m_displayedCoins);
                 int rad = 7;
-                if (filled && i == coins - 1
+                // Pop animation on the most-recently-collected coin
+                if (filled && i == m_displayedCoins - 1
                     && m_coinPopTimer.isValid() && m_coinPopTimer.elapsed() < 350) {
                     float t = m_coinPopTimer.elapsed() / 350.0f;
-                    rad = 7 + (int)(std::sin(t * 3.14159f) * 5.0f);
+                    rad = 7 + static_cast<int>(std::sin(t * 3.14159f) * 5.0f);
                 }
                 const QPoint centre(startX + i * spacing, CY + 5);
-                // Outer ring
                 p.setPen(QPen(filled ? QColor(200, 160, 20) : QColor(60, 60, 70), 1.5));
                 p.setBrush(filled ? QColor(240, 200, 40) : QColor(30, 30, 40));
                 p.drawEllipse(centre, rad, rad);
-                // Check mark on filled coins
                 if (filled) {
                     QFont cf = p.font(); cf.setPointSize(6); cf.setBold(true); p.setFont(cf);
                     p.setPen(QColor(80, 50, 0));
                     p.drawText(QRect(centre.x() - rad, centre.y() - rad, rad*2, rad*2),
-                               Qt::AlignCenter, QStringLiteral("✓"));
+                               Qt::AlignCenter, QStringLiteral("\u2713"));
                     p.setFont(lf);
                 }
             }
-            // Sub-label: goal hint
             QFont sf = p.font(); sf.setPointSize(7); p.setFont(sf);
             shadowText(QRect(CX - 50, H - 18, 100, 14), Qt::AlignCenter,
-                       coins < 3 ? QStringLiteral("collect 3 to unlock") : QStringLiteral("treasure unlocked!"),
-                       coins < 3 ? QColor(120, 120, 130) : QColor(100, 230, 150));
+                       m_displayedCoins < numCoins
+                           ? QStringLiteral("collect %1 to unlock").arg(numCoins)
+                           : QStringLiteral("treasure unlocked!"),
+                       m_displayedCoins < numCoins ? QColor(120, 120, 130) : QColor(100, 230, 150));
+
         }
 
         // ── RIGHT GROUP: timers ──────────────────────────────────────────────
@@ -1334,6 +1344,14 @@ void GameWindow::onLevelChanged(int levelIndex)
     resizeToCurrentLevel();
     snapCameraToPlayer();
     injectSprites();
+
+    // Reset event-driven coin state for the new level
+    m_displayedCoins = 0;
+    m_coinsToUnlock  = m_game->coinsToUnlock();
+    // Invalidate bg gradient cache so it rebuilds for the new level index
+    m_bgCacheLevelIdx = -1;
+    m_bgCache         = QPixmap();
+
     update();
 }
 
@@ -1386,6 +1404,88 @@ void GameWindow::onGameOver(bool won, int score)
     m_gameOverOverlay->show();
     m_gameOverOverlay->raise();
 }
+
+void GameWindow::onSessionStateChanged(int stateInt)
+{
+    const SessionState state = static_cast<SessionState>(stateInt);
+    switch (state) {
+    case SessionState::PLAYING:
+        // Restart completed — both sides loaded. Hide overlay and resume.
+        if (m_gameOverOverlay->isVisible()) {
+            m_gameOverOverlay->setMultiplayerWaiting(false);
+            m_gameOverOverlay->hide();
+        }
+        m_statusText.clear();
+        m_statusIsAiHint = false;
+        setFocus();
+        update();
+        break;
+
+    case SessionState::WAITING_FOR_RESTART_CONFIRMATION:
+        m_statusText = QStringLiteral("Waiting for both players to confirm restart...");
+        m_statusIsAiHint = false;
+        m_statusDurationMs = 30000;
+        m_statusTimer.start();
+        update();
+        break;
+
+    case SessionState::RESTARTING:
+        m_statusText = QStringLiteral("Restarting...");
+        m_statusIsAiHint = false;
+        m_statusDurationMs = 5000;
+        m_statusTimer.start();
+        update();
+        break;
+
+    case SessionState::DISCONNECTED:
+    case SessionState::SESSION_CLOSED:
+        // peerDisconnected signal will fire immediately after and show the dialog
+        m_statusText.clear();
+        update();
+        break;
+
+    default:
+        break;
+    }
+}
+
+
+void GameWindow::onPeerDisconnected(const QString& reason)
+{
+    // Hide any in-progress overlays
+    m_gameOverOverlay->hide();
+    hidePauseOverlay();
+
+    // Show a non-blocking message then return to main menu
+    QMessageBox::warning(this,
+                         QStringLiteral("Peer Disconnected"),
+                         QStringLiteral("The multiplayer session ended:\n\n%1\n\nReturning to main menu.").arg(reason));
+
+    m_game->pause();
+    hide();
+    emit quitToMainMenuRequested();
+}
+
+void GameWindow::onSessionRejected(const QString& reason)
+{
+    QMessageBox::warning(this,
+                         QStringLiteral("Session Rejected"),
+                         QStringLiteral("Could not join the session:\n\n%1\n\nReturning to main menu.").arg(reason));
+    hide();
+    emit quitToMainMenuRequested();
+}
+
+void GameWindow::onCoinCollected(int total)
+{
+    // Authoritative total from Game — no polling, no duplicate events.
+    // In multiplayer, Game emits m_sharedCoinsCollected; in single-player it
+    // emits the individual player's total. Either way this is the correct value.
+    m_displayedCoins = total;
+    m_coinPopTimer.start();   // triggers the pop animation in paintEvent
+    update();                 // request a repaint so the animation starts immediately
+}
+
+
 void GameWindow::ensureLevelsConfigured()
 {
     if (m_levelsConfigured) return;
