@@ -95,15 +95,36 @@ assets/
 ## 👥 Credits & Team
 
 - **Bavly**:
-  - OOP Structure
-  - Classes, Inheritance
-  - Game Logic
-  - Movement
-  - Rules
-  - Target Interaction
-  - AI Helper Implementation
-  - Sprite Manager Implementation
-  - Qt HUD Implementation
-  - GUI, Qt Interface, Buttons, Screens, Score Display
+  - Integration of the code 
+  - debugging 
+  - LLM integration
+  - testing
+  - final touches
+  - team lead
+
+- **Youssef**:
+  - GUI
+  - Qt interface
+  - buttons
+  - screens
+  - score display
+
+- **Ali**:
+  - Game logic
+  - movement
+  - rules
+  - target interaction
+
+-**Abdallah**:
+  - OOP structure
+  - classes
+  - inheritance
+  - architecture
+  - module integration
+
+-**Ahmed**:
+  - Scoring system
+  - game state
+  - win/lose logic
 
 
