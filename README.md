@@ -4,7 +4,7 @@ A 2D top-down dungeon exploration and scavenger hunt RPG built with C++ and Qt6.
 
 Navigate through procedurally generated chambers and carefully crafted levels, collect scattered coins, decipher AI-generated clues, and unlock the hidden treasure vault before time runs out!
 
-## ✨ Features
+## ✨ Features!
 
 - **Dynamic Level Generation**: Uses BSP (Binary Space Partitioning) to procedurally generate unique dungeon layouts alongside pre-designed JSON levels.
 - **Custom Tile-based Rendering**: Smooth sub-tile player movement, frame-based sprite animations, and a dynamic fog-of-war system.
